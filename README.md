@@ -57,6 +57,9 @@ Put high, not buried, because these are the things that would bite you:
 - **`chunk_cost` is calibrated at one shape.** The measured chunking cost is non-monotonic (kernel
   reselection at different chunk depths), so the planner uses a deliberately conservative envelope.
 - **48 shapes were skipped** by the tuning time budget; very large shapes fall back to nearest-shape lookup.
+- **The ρ correction is pessimistic for native fp32 under distributed cancellation.** It can make the
+  planner escalate or decline when plain fp32 would have sufficed. Safe direction, but it costs
+  efficiency — see *What ρ does and does not determine*.
 - Not a drop-in `rocblas_sgemm` replacement. Row-major, non-transposed, `alpha=1, beta=0` only.
 
 ---
@@ -85,8 +88,31 @@ err(scheme, K, c, ρ)  =  ρ/ρ_ref(K) · sqrt( floor² + a²·(K/c) )        ρ
   kernel), **not** a property of the number formats. Do not describe it as one.
 - **`bf16×6` is strictly dominated and never selected.** It costs ~1.75× native fp32 time to reach the
   same error `fp32 + chunk(4)` reaches at ~1.0×. Kept in the enum for benchmarking only.
-- **ρ = ‖|A||B|‖_F / ‖AB‖_F** is the cancellation ratio. It scales *every* scheme's error equally, so it
-  does **not** decide which scheme wins — `K` does. ρ decides whether the winner meets your request.
+- **ρ = ‖|A||B|‖_F / ‖AB‖_F** is the cancellation ratio: how far the true product shrinks below the
+  magnitude of the terms being summed. `K` decides *which* scheme wins; ρ decides whether the winner
+  meets your request. See the caveat immediately below — ρ is not the whole story.
+
+### What ρ does and does not determine
+
+Tested on three structurally different synthetic families. **Representation-bound schemes obey `err ∝ ρ`;
+accumulation-bound ones do not, because their error depends on the *structure* of the cancellation.**
+
+| | family 2 — algebraic annihilation | family 3 — oscillatory integral |
+|---|---|---|
+| how cancellation arises | `A=[G\|G]`, `B=[H; −H+δG₂]`; the bulk annihilates | smooth rows against oscillating columns; ρ tuned by frequency |
+| **fp32** | `1.989e-8 · ρ` | **flat at ~4.4e-6** across ρ = 1.2 → 3019 |
+| **bf16×3** | `≈3.3–4.6e-8 · ρ` | **`≈3.4e-8 · ρ`** — same constant, different mechanism |
+
+Representation error is a fixed fraction of `|a||b|`, so it always scales with `‖|A||B|‖ = ρ‖C‖` whatever
+the summation order. Accumulation error instead depends on how large the partial sums grow *before* they
+cancel: family 2 cancels late (sums balloon, then cancel), family 3 cancels in a distributed way (the
+oscillation keeps every partial sum small).
+
+**Consequence for this library, stated plainly:** the planner scales *every* scheme by `ρ/ρ_ref`, which is
+correct for bf16×3 and **pessimistic for fp32** on family-3-like data. It may therefore escalate to a more
+expensive scheme, or decline a request, when plain fp32 would in fact have been accurate enough. That
+costs efficiency and never correctness — it cannot cause an under-delivery — but it is a real limitation,
+not a rounding detail.
 
 ### Measuring ρ cheaply
 
@@ -125,13 +151,21 @@ Every claim here survived a specific attempt to break it:
 
 Kept deliberately. These cost real time to find and each one nearly became a published result.
 
-**1. A 31× accuracy cliff that did not exist.** Sweeping the cancellation ratio produced a clean
-non-monotonic curve: bf16×3 peaking at 31× worse than fp32 around ρ≈10⁴, then recovering. It was an
-artifact of my own matrix construction — as ρ grew, the entries approached ±1, and **bf16 represents ±1
-exactly**. The tell was a number that had no right to exist: bf16×6's error *improving* with ρ, down to
-2.5e-8. A second matrix family with generic N(0,1) values everywhere showed the truth: the ratio is
-nearly flat at 2.3–2.8×, with no cliff at all. *A synthetic matrix family is a hypothesis about your
-data, not evidence. Cross-check with a structurally different one.*
+**1. A 31× accuracy cliff that did not exist — and then a model that was only half right.** Sweeping the
+cancellation ratio produced a clean non-monotonic curve: bf16×3 peaking at 31× worse than fp32 around
+ρ≈10⁴, then recovering. It was an artifact of my own matrix construction — as ρ grew, the entries
+approached ±1, and **bf16 represents ±1 exactly**. The tell was a number that had no right to exist:
+bf16×6's error *improving* with ρ, down to 2.5e-8. A second family with generic N(0,1) values showed no
+cliff at all, and a clean `err = c·ρ` for every scheme.
+
+That second conclusion was also incomplete. A **third** family, inducing cancellation through an
+oscillatory integral rather than by construction, shows `err = c·ρ` holds **only for the
+representation-bound scheme**: bf16×3 obeys it with the same `c ≈ 3.4e-8` across both mechanisms, while
+fp32's error is *flat* in ρ where family 2 had it growing linearly. Three families, three different
+answers; only two things survived all of them (§ *What ρ does and does not determine*).
+
+*A synthetic matrix family is a hypothesis about your data, not evidence. One is worthless, two can
+disagree, three told me which parts were real.*
 
 **2. "Emulation is more accurate than FP32 at large K" — true, then false.** bf16×3's error is flat in K
 while native FP32's grows as K^0.4999, and they cross at K≈76,500. Real, reproducible — and it evaporates
@@ -156,7 +190,7 @@ README says so rather than guessing.
 src/emugemm.{h,cpp}        the library: model, dispatcher, ρ probe, tuned-solution lookup
 bench/emugemm_test.cpp     invariant suite (never slower than native; never exceeds declared error)
 bench/emu_adversarial.cpp  contract test on ill-conditioned data, ρ from 1e2 to 1.1e6
-bench/rho_sweep.cpp        cancellation sweep, two independent matrix families
+bench/rho_sweep.cpp        cancellation sweep, three independent matrix families (--family 1/2/3)
 bench/gen_tune_table.cpp   offline per-shape solution tuner: resumable, shardable across GCDs
 bench/mfma_peak2.cpp       raw matrix-core rates: fp64/fp32/fp16/bf16(both opcodes)/int8
 bench/flat_error.cpp       chunked-FP64 accumulation study
