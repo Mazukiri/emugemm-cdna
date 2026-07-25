@@ -1,0 +1,11 @@
+*.o
+*.log
+*.txt
+emugemm_test
+emu_adversarial
+rho_sweep
+gen_tune_table
+mfma_peak2
+flat_error
+error_model
+randsvd2
