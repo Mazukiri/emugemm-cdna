@@ -75,6 +75,38 @@ __global__ void gen_B2(float* B,float* aB,double* B64,size_t n,long N,long K,flo
     float v = (k<half) ? base : (-base + d*gauss(i,55555u));
     B[i]=v; aB[i]=fabsf(v); B64[i]=(double)v; }
 
+// ---- FAMILY 3: smooth x oscillatory. Cancellation from a MECHANISM, not from algebra ----
+// Family 1 fails because its values collapse onto +-1, which bf16 stores exactly. Family 2 fixes the
+// values but still builds cancellation by exact algebraic annihilation (H against -H) and repeats a
+// block in A, so its rows are not independent along K. Neither resembles how cancellation actually
+// arises in numerical work.
+// Here A's rows are samples of smooth decaying functions and B's columns are oscillations of random
+// integer frequency. Their inner product is an oscillatory integral, which nearly vanishes -- the same
+// mechanism that makes quadrature and differential operators ill-conditioned. A DC offset m added to B
+// restores a non-cancelling component and tunes rho (~0.64/m). Every value is an irrational transcendental
+// with no special binary structure, no repeated blocks, and no exact annihilation anywhere.
+// A must be SMOOTH along K for the mechanism to work: a non-smooth perturbation does not cancel against
+// an oscillation, so it floors rho. A first attempt with 0.1*gauss noise saturated at rho=20 for exactly
+// that reason. Rows differ by decay rate and a smooth phase, which keeps A well-conditioned in M without
+// breaking smoothness in K.
+__global__ void gen_A3(float* A,float* aA,double* A64,size_t n,long K){
+    size_t i=(size_t)blockIdx.x*blockDim.x+threadIdx.x; if(i>=n) return;
+    long r=(long)(i/K), c=(long)(i%K);
+    float a=0.5f+3.5f*unif((size_t)r,909u);                       // per-row decay rate
+    float b=0.3f*unif((size_t)r,1313u);                           // per-row smooth modulation
+    float x=(float)c/(float)K;
+    float v=expf(-a*x)*(1.0f+b*sinf(3.14159265f*x));
+    A[i]=v; aA[i]=fabsf(v); A64[i]=(double)v; }
+// rho is tuned by the OSCILLATION FREQUENCY, not by a DC offset: the inner product of a smooth function
+// with cos(2*pi*f*x) decays like 1/f^2, so rho ~ f^2. A small DC term keeps low rho reachable.
+__global__ void gen_B3(float* B,float* aB,double* B64,size_t n,long N,long K,float fbase,float m){
+    size_t i=(size_t)blockIdx.x*blockDim.x+threadIdx.x; if(i>=n) return;
+    long k=(long)(i/N), c=(long)(i%N);
+    float f=floorf(fbase*(0.7f+0.6f*unif((size_t)c,313u)))+1.0f;  // jittered around fbase
+    float ph=6.2831853f*unif((size_t)c,977u);
+    float v=cosf(6.2831853f*f*(float)k/(float)K+ph)+m;
+    B[i]=v; aB[i]=fabsf(v); B64[i]=(double)v; }
+
 __global__ void rademacher(float* X,size_t n,unsigned s){
     size_t i=(size_t)blockIdx.x*blockDim.x+threadIdx.x; if(i<n) X[i]=(unif(i,s)>0.5f)?1.f:-1.f; }
 __global__ void to_bf(const float* X,bf16* S0,bf16* S1,size_t n){
@@ -130,7 +162,9 @@ int main(int argc,char**argv){
         double v=0; HC(hipMemcpy(&v,acc,8,hipMemcpyDeviceToHost)); return sqrt(v); };
 
     printf("rho sweep   M=N=%d  K=%ld  probes=%d  family=%d (%s)   truth=device DGEMM\n",M,K,P,FAM,
-           FAM==1?"sign-alternating, values near +-1":"annihilating, all values generic N(0,1)");
+           FAM==1?"sign-alternating, values near +-1":
+           FAM==2?"annihilating, all values generic N(0,1)":
+                  "smooth x oscillatory, cancellation from an oscillatory integral");
     printf("%9s %11s %11s %7s | %11s %11s %11s %11s | %s\n",
            "rho_tgt","rho_true","rho_hat","hat/tru","fp32","bf16x3","bf16x6","fp16x3","bf16x3/fp32");
 
@@ -138,9 +172,13 @@ int main(int argc,char**argv){
         float invrho=(float)(1.0/rho), amp=(float)(sqrt((double)K)/rho);
         if(FAM==1){ gen_A <<<(na+t-1)/t,t>>>(A,aA,A64,na,K,invrho);
                     gen_B <<<(nb+t-1)/t,t>>>(B,aB,B64,nb,N,invrho,amp); }
-        else      { float d=(float)(0.6366*sqrt(2.0*K)/rho);
+        else if(FAM==2){ float d=(float)(0.6366*sqrt(2.0*K)/rho);
                     gen_A2<<<(na+t-1)/t,t>>>(A,aA,A64,na,K);
                     gen_B2<<<(nb+t-1)/t,t>>>(B,aB,B64,nb,N,K,d); }
+        else      { float fb=(float)fmin(sqrt(rho)*0.9, (double)K/16.0);
+                    float m=(float)(0.6366/rho);
+                    gen_A3<<<(na+t-1)/t,t>>>(A,aA,A64,na,K);
+                    gen_B3<<<(nb+t-1)/t,t>>>(B,aB,B64,nb,N,K,fb,m); }
         to_bf <<<(na+t-1)/t,t>>>(A,A0,A1,na);  to_bf <<<(nb+t-1)/t,t>>>(B,B0,B1,nb);
         to_bf3<<<(na+t-1)/t,t>>>(A,A0,A1,A2,na); to_bf3<<<(nb+t-1)/t,t>>>(B,B0,B1,B2,nb);
         to_f16<<<(na+t-1)/t,t>>>(A,Ah,Al,na);  to_f16<<<(nb+t-1)/t,t>>>(B,Bh,Bl,nb);

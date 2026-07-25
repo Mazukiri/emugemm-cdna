@@ -239,3 +239,66 @@ thừa**. Mọi lần từ chối đều được số đo xác nhận là thậ
 ⇒ **Lỗ hổng "emugemm không an toàn cho dữ liệu điều kiện xấu" (còn nợ #1 của Round 9) đã đóng.**
 Thư viện giờ không bao giờ hứa một độ chính xác nó không giao được — nó từ chối. Từ chối là hợp lệ, nói dối
 thì không.
+
+---
+
+# Family 3 — cơ chế triệt tiêu thứ ba, và nó SỬA mô hình của family 2
+
+Family 1 hỏng vì giá trị dồn về ±1 (bf16 biểu diễn chính xác). Family 2 sạch về giá trị nhưng vẫn có
+**khối lặp** trong A và triệt tiêu bằng **khử đại số chính xác** (`H` với `−H`). Family 3 tạo triệt tiêu
+bằng **cơ chế vật lý**: hàng của A là hàm trơn (`e^{-ax}(1+b·sin πx)`), cột của B là dao động
+`cos(2πfx+φ)`. Tích trong của chúng là một **tích phân dao động** — đúng cơ chế làm quadrature và toán tử
+vi phân trở nên ill-conditioned. ρ điều khiển bằng **tần số** (`ρ ~ f²`), không bằng thành phần DC.
+
+*(Lần thử đầu để nhiễu `0.1·g` trong A và bão hoà ở ρ=20: nhiễu **không trơn** nên không triệt tiêu với
+dao động, tạo thành sàn. Phải bỏ nhiễu — bản thân điều này đã xác nhận cơ chế đúng như dự định.)*
+
+**M=N=2048, K=16384, P=64:**
+
+| ρ | fp32 | bf16×3 | bf16×6 | fp16×3 | bf16×3/fp32 |
+|---|---|---|---|---|---|
+| 1.19 | 2.822e-06 | 1.896e-06 | 1.895e-06 | 1.196e-06 | 0.67× |
+| 10.5 | 3.699e-06 | 2.015e-06 | 1.955e-06 | 1.849e-06 | 0.54× |
+| 96.4 | 4.438e-06 | 3.747e-06 | 1.469e-06 | 2.256e-06 | 0.84× |
+| 380 | 4.438e-06 | 1.342e-05 | 1.107e-06 | 2.945e-06 | 3.02× |
+| 1 515 | 4.387e-06 | 5.204e-05 | 9.670e-07 | 4.949e-06 | 11.9× |
+| 3 019 | **4.287e-06** | 1.034e-04 | 7.310e-07 | 8.838e-06 | 24.1× |
+
+## Kết quả: `err = c·ρ` chỉ đúng cho lược đồ bị chặn bởi BIỂU DIỄN
+
+| | family 2 (khử đại số) | family 3 (tích phân dao động) |
+|---|---|---|
+| **fp32** | `1.989e-8 · ρ` | **PHẲNG ~4.4e-6**, không phụ thuộc ρ |
+| **bf16×3** | `≈ 3.3–4.6e-8 · ρ` | **`≈ 3.4e-8 · ρ`** ✓ khớp |
+
+**bf16×3 tuân theo `c·ρ` với cùng hằng số trong cả hai họ**, dù cơ chế triệt tiêu hoàn toàn khác nhau.
+**fp32 thì không.** Lý do:
+
+- Sai số **biểu diễn** là một tỉ lệ cố định của `|a||b|`, nên **luôn** tỉ lệ với `‖|A||B|‖ = ρ‖C‖`,
+  bất kể thứ tự cộng dồn. ⇒ bf16×3 (bị chặn bởi biểu diễn) luôn ∝ ρ.
+- Sai số **tích luỹ** phụ thuộc **tổng riêng phần lớn đến đâu trước khi triệt tiêu**. Family 2 triệt tiêu
+  *muộn* (tổng phình lên rồi mới khử) ⇒ lỗi làm tròn tỉ lệ với độ lớn trung gian ⇒ fp32 ∝ ρ.
+  Family 3 triệt tiêu *phân tán* (dao động, tổng riêng phần luôn nhỏ) ⇒ fp32 phẳng.
+
+⇒ **ρ một mình KHÔNG xác định được sai số. Cấu trúc của sự triệt tiêu cũng quan trọng.**
+
+## Điều này có phá hợp đồng của thư viện không? KHÔNG — nó lệch về phía an toàn
+
+Dispatcher nhân sai số dự đoán của **mọi** lược đồ với `ρ/ρ_ref`. Với bf16×3 thì đúng. Với fp32, ở cấu
+trúc kiểu family 3, nó **dự đoán tệ hơn thực tế** — tức dispatcher có thể **leo thang hoặc từ chối
+không cần thiết**, nhưng **không bao giờ giao thiếu**. Đây đúng là hướng sai an toàn.
+
+Cái mất là hiệu quả, không phải tính đúng đắn: có những bài toán fp32 thừa sức đạt target mà thư viện
+vẫn trả thêm thời gian. Ghi nhận là **giới hạn đã biết**, không phải lỗi.
+
+## Ba họ, ba kết luận — và vì sao phải có cả ba
+
+| họ | cơ chế | kết luận nếu chỉ có nó |
+|---|---|---|
+| 1 | dấu xen kẽ, giá trị → ±1 | "có bướu 31×" — **SAI, hiện vật** |
+| 2 | khử đại số `H`/`−H` | "`err = c·ρ` cho mọi lược đồ" — **đúng một nửa** |
+| 3 | tích phân dao động | "fp32 phẳng theo ρ" — đúng **cho cơ chế này** |
+
+Không họ nào một mình cho ra bức tranh đúng. Điều duy nhất **sống sót qua cả ba**: mọi đường
+low-precision có hằng số tích luỹ **bằng nửa fp32** (family 3 ở ρ thấp: bf16×3 = bf16×6 = 1.9e-6 so với
+fp32 2.8e-6), và **sai số biểu diễn của bf16×3 luôn ∝ ρ với c ≈ 3.4e-8**.
