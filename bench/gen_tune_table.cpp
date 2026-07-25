@@ -132,7 +132,12 @@ int main(int argc,char**argv){
                 HIP_CHECK(hipEventRecord(e)); HIP_CHECK(hipEventSynchronize(e));
                 float ms=0; HIP_CHECK(hipEventElapsedTime(&ms,s,e)); return ms/reps; };
 
-            double t_def=time1(rocblas_gemm_algo_standard,0,3);
+            // Warm the default AND the candidates before timing anything: an earlier version timed the
+            // default first on a cold device and the winners last on a warm one, inflating gain by ~2.4%
+            // on average and up to 23% on individual shapes. See bench/audit_table.cpp.
+            for(int w=0;w<4;++w) run(rocblas_gemm_algo_standard,0);
+            HIP_CHECK(hipDeviceSynchronize());
+            double t_def=time1(rocblas_gemm_algo_standard,0,5);
             rocblas_int nsol=0;
             if(rocblas_gemm_ex_get_solutions(rb,rocblas_operation_none,rocblas_operation_none,N,M,(rocblas_int)K,
                  &f1,pB,ty,N,pA,ty,(rocblas_int)K,&f0,dC,rocblas_datatype_f32_r,N,dC,rocblas_datatype_f32_r,N,

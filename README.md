@@ -192,6 +192,8 @@ bench/emugemm_test.cpp     invariant suite (never slower than native; never exce
 bench/emu_adversarial.cpp  contract test on ill-conditioned data, ρ from 1e2 to 1.1e6
 bench/rho_sweep.cpp        cancellation sweep, three independent matrix families (--family 1/2/3)
 bench/gen_tune_table.cpp   offline per-shape solution tuner: resumable, shardable across GCDs
+bench/audit_table.cpp      re-measures the tuning table without the ordering bias
+bench/validate_issue.cpp   spot-check of the published figures, plus rocblas_sgemm vs gemm_ex
 bench/mfma_peak2.cpp       raw matrix-core rates: fp64/fp32/fp16/bf16(both opcodes)/int8
 bench/flat_error.cpp       chunked-FP64 accumulation study
 bench/error_model.cpp      error vs data distribution
@@ -243,3 +245,29 @@ on **cancellation**, which is what actually breaks the error model.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+---
+
+## A correction I had to make to my own published numbers
+
+After filing [ROCm/rocm-libraries#9985](https://github.com/ROCm/rocm-libraries/issues/9985) I audited my
+own measurement and found an ordering bias: `gen_tune_table.cpp` timed the *default* first, on a cold
+device, and the winning solution last, after hundreds of launches had warmed it. That inflates
+`gain = default / best`.
+
+Re-measured with both variants warmed and then timed interleaved (`bench/audit_table.cpp`,
+`bench/validate_issue.cpp`), over a random sample of 40 rows:
+
+| | as published | re-measured |
+|---|---|---|
+| mean gain | 1.464 | 1.432 |
+| median gain | 1.254 | 1.247 |
+| shapes losing >10% | 80% | 75% |
+
+Aggregate inflation is **2.4%**, but individual shapes were worse — one headline example went from
+2.00× to **1.63×**. The tool now warms every candidate before timing any of them, and the correction is
+posted on the issue.
+
+Two things I *suspected* were wrong turned out not to be, and I checked rather than assumed: the
+minimum-over-16 selection biases the best time by less than 0.5%, and `rocblas_sgemm` agrees with
+`rocblas_gemm_ex`+`algo_standard` to within 1.2%, so the finding applies to the API people actually call.
