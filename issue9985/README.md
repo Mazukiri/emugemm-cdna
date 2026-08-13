@@ -35,7 +35,9 @@ kernel. `src/answer_q2.py` does the conversion and the coordinate swap in one pl
 | `ROCBLAS_USE_HIPBLASLT` A/B | `hipblaslt_ab_{fp32,bf16fp16}.csv`, and `*_v2.csv` re-measured under the current method | — |
 | selection bias: no search, fresh process, median | `data/gfx90a/unbiased.csv` (60) | `data/gfx942/unbiased.csv` (60) |
 | levers that do **not** help | `performance_metric.csv` (1200 × 3), `tensile_predicates.csv` (450 × 8), `determinism.csv` (39), `batched_gemm.csv` (231 × 4) | — |
-| the fp16 TT band, isolated and repeated | `fp16_{tt,nn}_band_run{1,2,3}.csv` | — |
+| the fp16 TT band, isolated and repeated | `fp16_{tt,nn}_band_run{1,2,3}.csv` | same names under `gfx942/` — 1.03 against gfx90a's 4.16 |
+| four-arm comparison with exhaustive hipBLASLt enumeration | — | `four_arm_nv120.csv` (117), `four_arm_cap64.csv` (shortlist A/B) |
+| workload re-measured under the current method | — | `workload_v2.csv` (338) |
 
 ## Tools
 
