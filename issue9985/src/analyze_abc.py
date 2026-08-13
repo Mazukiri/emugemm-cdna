@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Analyse the A/B/C verification run and say, per stage, whether the reply needs changing.
 
-Each stage has a pass condition written down BEFORE the data existed, because deciding what counts
-as confirmation after seeing the numbers is how the six retracted figures in section 9 happened.
+Each stage's pass condition is stated below and was fixed before the data existed. Choosing the
+threshold after seeing the numbers is not a check.
 
   A  PASS if the v2 re-measurement moves each headline by less than 10% relative, and moves it in
      the direction the "the bias cancels, so the old numbers are conservative" argument predicts

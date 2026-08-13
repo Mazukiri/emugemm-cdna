@@ -1,126 +1,131 @@
-# Round 10 (2026-07-26) — Đo đường cong triệt tiêu, và một probe rẻ dự đoán được nó
+# Round 10 (2026-07-26) — Measuring the cancellation curve, and a cheap probe that predicts it
 
-## Vì sao là hướng này (sau khi quét tài liệu)
+## Why this direction (after a literature scan)
 
-Quét kỹ tài liệu 2024–2026 cho kết quả **bất lợi cho phần lớn ý tưởng của Round 9**:
+A careful scan of the 2024–2026 literature is **unfavourable to most of Round 9's ideas**:
 
-| ý tưởng | trạng thái |
+| idea | status |
 |---|---|
-| CholeskyQR2 + iterative refinement cho RandNLA | **Baboulin, Donfack, Kaya, Mary, Robeyns — Euro-Par 2024** đã làm đúng cả ba, đạt 1.28× |
-| IR hấp thụ sai số low-precision | Kinh điển (Carson–Higham); bản low-rank có trên SIMAX |
-| Precision thích ứng theo condition từng tile | arXiv 2508.14848 (8/2025) |
-| Fuse kernel emulation | **EmuGEMM, arXiv 2606.25453 (6/2026)** — 83% peak INT8, Hopper/Blackwell |
-| "vendor BLAS bỏ phí" | cuBLAS đã được ghi nhận bỏ phí ~16%; median của ta 15–19% ⇒ chỉ là *"AMD cũng vậy"* |
+| CholeskyQR2 + iterative refinement for RandNLA | **Baboulin, Donfack, Kaya, Mary, Robeyns — Euro-Par 2024** did all three, reaching 1.28× |
+| IR absorbing low-precision error | classical (Carson–Higham); a low-rank variant exists in SIMAX |
+| Per-tile precision adapted to condition number | arXiv 2508.14848 (Aug 2025) |
+| Fusing emulation kernels | **EmuGEMM, arXiv 2606.25453 (Jun 2026)** — 83% of INT8 peak, Hopper/Blackwell |
+| "vendor BLAS leaves performance on the table" | cuBLAS is already documented leaving ~16%; our median is 15–19%, so this is only *"AMD too"* |
 
-Ghi chú kỹ thuật: **fusion chỉ đáng giá khi số lát p lớn.** EmuGEMM thắng vì Ozaki `p` lát cần `p(p+1)/2`
-kernel → traffic O(p²), fuse xuống O(p). Với **p=3** như bf16×3 gần như không có gì để gộp — và ta đã ở
-**137/169 = 81% peak bf16**, ngang hiệu suất họ báo cáo. Không có đường ở đó.
+A technical note: **fusion only pays when the slice count p is large.** EmuGEMM wins because an Ozaki
+scheme with `p` slices needs `p(p+1)/2` kernels → O(p²) traffic, fused down to O(p). With **p=3**, as
+in bf16×3, there is almost nothing to fuse — and we are already at **137/169 = 81% of bf16 peak**, on
+par with the efficiency they report. There is no opening there.
 
-**Cái còn mở**, được nêu thẳng là vấn đề chưa giải trong arXiv 2601.08077:
+**What remains open** is named directly as an unsolved problem in arXiv 2601.08077:
 
-> *"inaccurate estimation of the emulation level to achieve desired accuracy levels… ozIMMU and GEMMul8
-> **don't support emulating FP64 GEMM to a specific accuracy level**."*
+> *"inaccurate estimation of the emulation level to achieve desired accuracy levels… ozIMMU and
+> GEMMul8 **don't support emulating FP64 GEMM to a specific accuracy level**."*
 
-Và Ozaki-II (arXiv 2508.03984) xác nhận từ phía kia: số moduli là **"user-specified and fixed"**. Các lược đồ
-thích ứng hiện có chọn theo **thống kê số mũ** (dải động). **Không ai chọn theo độ triệt tiêu** — mà Phase 5
-của Round 9 cho thấy triệt tiêu mới là thứ phá mô hình, không phải dải động.
+Ozaki-II (arXiv 2508.03984) confirms it from the other side: the modulus count is
+**"user-specified and fixed"**. Existing adaptive schemes select on **exponent statistics** (dynamic
+range). **Nobody selects on cancellation** — and Round 9's Phase 5 showed that cancellation, not
+dynamic range, is what breaks the model.
 
-⇒ Đóng góp không phải "emulation nhanh hơn" (đất đã cày nát) mà là **emulation có bảo đảm**: đặt được ngưỡng
-sai số và thật sự nhận được, trên dữ liệu không do mình chọn.
+⇒ The contribution is not "emulation is faster" (well-tilled ground) but **emulation with a
+guarantee**: setting an error threshold and actually getting it, on data one did not choose.
 
 ---
 
-## Thí nghiệm (`rho_sweep.cpp`)
+## Experiment (`rho_sweep.cpp`)
 
-`ρ = ‖|A||B|‖_F / ‖AB‖_F` — mức độ tích thật bị co lại so với độ lớn các số hạng được cộng. ρ=1 là lành,
-ρ lớn nghĩa là đáp số là hiệu nhỏ của những số lớn. Dựng ma trận có ρ điều khiển được, nhưng **ρ đạt được
-luôn được đo lại bằng fp64** chứ không tin vào đại số.
+`ρ = ‖|A||B|‖_F / ‖AB‖_F` — how far the true product shrinks relative to the magnitude of the terms
+being summed. ρ=1 is benign; large ρ means the answer is a small difference of large numbers. The
+matrices are constructed with controllable ρ, but **the achieved ρ is always re-measured in fp64**
+rather than trusted from the algebra.
 
-**M=N=2048, K=16384, 8 probe Hutchinson, chuẩn = DGEMM trên GPU**
+**M=N=2048, K=16384, 8 Hutchinson probes, reference = DGEMM on the GPU**
 
-| ρ đo được | ρ̂ (probe rẻ) | ρ̂/ρ | fp32 | bf16×3 | bf16×6 | fp16×3 | bf16×3 / fp32 |
+| measured ρ | ρ̂ (cheap probe) | ρ̂/ρ | fp32 | bf16×3 | bf16×6 | fp16×3 | bf16×3 / fp32 |
 |---|---|---|---|---|---|---|---|
 | 6.96e+01 | 6.32e+01 | 0.91 | 2.159e-06 | 3.812e-06 | 1.034e-06 | 1.089e-06 | 1.77× |
 | 7.40e+01 | 7.43e+01 | **1.00** | 2.103e-06 | 3.475e-06 | 9.220e-07 | 1.055e-06 | 1.65× |
 | 1.86e+02 | 1.86e+02 | **1.00** | 2.141e-06 | 7.319e-06 | 4.246e-07 | 1.079e-06 | 3.42× |
 | 7.37e+02 | 7.37e+02 | **1.00** | 2.275e-06 | 2.054e-05 | 6.093e-08 | 1.185e-06 | 9.03× |
 | 2.95e+03 | 2.95e+03 | **1.00** | 2.983e-06 | 6.316e-05 | 6.195e-08 | 1.858e-06 | 21.2× |
-| **1.18e+04** | 1.18e+04 | **1.00** | 7.698e-06 | 2.422e-04 | 6.384e-08 | 4.634e-06 | **31.5× ← đỉnh** |
+| **1.18e+04** | 1.18e+04 | **1.00** | 7.698e-06 | 2.422e-04 | 6.384e-08 | 4.634e-06 | **31.5× ← peak** |
 | 4.71e+04 | 4.72e+04 | **1.00** | 8.126e-05 | 8.358e-04 | 4.325e-08 | 1.753e-05 | 10.3× |
 | 1.89e+05 | 1.89e+05 | **1.00** | 3.510e-04 | 1.176e-03 | 3.044e-08 | 7.009e-05 | 3.35× |
 | 7.54e+05 | 7.59e+05 | **1.01** | 1.340e-03 | 1.181e-03 | 2.541e-08 | 1.213e-04 | **0.88×** |
 
 ---
 
-## Ba kết quả
+## Results
 
-### 1. ✅ Probe rẻ dự đoán ρ chính xác — cơ chế (b) đã đóng
+### 1. The cheap probe predicts ρ accurately
 
-Ước lượng Hutchinson bằng **2 GEMM gầy mỗi vế** (`A(BΩ)` và `|A|(|B|Ω)` với Ω là Rademacher `N×8`),
-chi phí `O((MK+KN)·P)` so với `O(MNK)` của GEMM thật — ở đây khoảng **1.5%**.
+A Hutchinson estimate using **two skinny GEMMs per side** (`A(BΩ)` and `|A|(|B|Ω)` with Ω a Rademacher
+`N×8`), costing `O((MK+KN)·P)` against `O(MNK)` for the real GEMM — about **1.5%** here.
 
-**ρ̂/ρ = 1.00 suốt bốn bậc độ lớn** (chỉ điểm đầu lệch 0.91, vì cấu trúc chạm sàn ở ρ≈70 chứ không xuống 1).
-⇒ **Dispatcher có thể định giá độ triệt tiêu TRƯỚC khi cam kết lược đồ.** Đây là mảnh còn thiếu để đóng vòng.
+**ρ̂/ρ = 1.00 across four orders of magnitude** (only the first point is off, at 0.91, because the
+construction floors out at ρ≈70 rather than reaching 1).
+⇒ **A dispatcher can price cancellation BEFORE committing to a scheme.** This was the missing piece.
 
-### 2. 🔍 Quan hệ không đơn điệu — vùng nguy hiểm nằm ở GIỮA, không phải ở cực
+### 2. A non-monotonic relationship — the dangerous region is in the MIDDLE, not at the extremes
 
-Đây là điều tôi không lường trước. Tỉ số bf16×3/fp32 **tăng tới đỉnh 31.5× quanh ρ≈10⁴ rồi giảm trở lại**,
-và ở ρ≈7.5e5 thì bf16×3 **tốt hơn** fp32 (0.88×).
+This was not anticipated. The bf16×3/fp32 ratio **rises to a peak of 31.5× around ρ≈10⁴ and then falls
+back**, and at ρ≈7.5e5 bf16×3 is **better** than fp32 (0.88×).
 
-Lý do: ở ρ cực lớn **fp32 cũng sụp** (2.16e-6 → 1.34e-3), đuổi kịp bf16×3 vốn đã bão hoà quanh 1.18e-3.
-Nói cách khác, khi triệt tiêu đủ nặng thì **mọi lược đồ đều hỏng như nhau**, nên emulation không tệ hơn.
+The reason: at extreme ρ **fp32 collapses too** (2.16e-6 → 1.34e-3), catching up with bf16×3, which
+has already saturated around 1.18e-3. Put differently, once cancellation is severe enough **every
+scheme fails equally**, so emulation is no worse.
 
-**Vùng phải cảnh giác là ρ ≈ 10³–10⁵**, nơi fp32 còn trụ được nhưng bf16×3 đã suy. Đây là phát biểu dùng
-được cho dispatcher; "35× tệ hơn" của Round 9 thì không.
+**The region to watch is ρ ≈ 10³–10⁵**, where fp32 still holds up but bf16×3 has degraded. That is a
+usable statement for a dispatcher; Round 9's "35× worse" is not.
 
-### 3. ⚠️ Con số 35× của Round 9 phụ thuộc cách dựng ma trận
+*(Superseded below — see the family 2 section. This shape is an artifact of the matrix construction.)*
 
-Round 9 đo 35× ở ρ=1.84e5. Ở đây, ρ=1.89e5 cho **3.35×**. Cùng ρ, khác một bậc. Nguyên nhân: hai cách dựng
-khác nhau (K khác, và Round 9 giữ nhiễu của A cố định ở 1e-3 còn ở đây nhiễu tỉ lệ 1/ρ), làm sai số **fp32**
-lệch 7.5×. ⇒ **ρ một mình chưa đủ để dự đoán sai số**; nó dự đoán được *chính nó*, nhưng ánh xạ ρ→sai số
-còn phụ thuộc cấu trúc. Cần ít nhất một họ ma trận thứ hai trước khi hiệu chuẩn dispatcher.
+### 3. Round 9's 35× figure depends on how the matrices were built
 
----
+Round 9 measured 35× at ρ=1.84e5. Here, ρ=1.89e5 gives **3.35×** — same ρ, an order of magnitude
+apart. The cause is two different constructions (different K, and Round 9 held A's noise fixed at 1e-3
+whereas here noise scales as 1/ρ), which moves the **fp32** error by 7.5×. ⇒ **ρ alone does not
+predict error**; it predicts *itself*, but the ρ→error mapping also depends on structure. At least a
+second matrix family is needed before calibrating a dispatcher.
 
-### 4. ✅ Đường cong ổn định qua nhiều shape; và probe chỉ cần đủ mẫu
+### 4. The curve is stable across shapes; the probe just needs enough samples
 
-Chạy thêm ba cấu hình:
+Three further configurations:
 
-| shape | ρ̂/ρ (P=8) | đỉnh bf16×3/fp32 | vị trí đỉnh |
+| shape | ρ̂/ρ (P=8) | peak bf16×3/fp32 | peak location |
 |---|---|---|---|
 | K=16384, M=2048 | 1.00 | 31.5× | ρ≈1.2e4 |
 | K=65536, M=2048 | 0.99 | 22.5× | ρ≈1.2e4 |
 | K=4096, M=2048 | 1.63 | 40.3× | ρ≈3e3 |
 | K=16384, M=4096 | 1.45 | 32.0× | ρ≈1.2e4 |
 
-**Hình dạng đường cong bất biến qua mọi shape**: tăng tới đỉnh ở ρ ≈ 3×10³–10⁴ (biên độ 22–40×), rồi giảm,
-và ở ρ≈7.5e5 thì bf16×3 luôn **tốt hơn** fp32 (0.62–0.91×). Con số 35× của Round 9 nằm gọn trong họ này.
+**The curve shape is invariant across shapes**: rising to a peak at ρ ≈ 3×10³–10⁴ (amplitude 22–40×),
+then falling, with bf16×3 always **better** than fp32 at ρ≈7.5e5 (0.62–0.91×). Round 9's 35× sits
+inside this family.
 
-Tỉ số ρ̂/ρ **hằng số trong mỗi shape nhưng khác giữa các shape** — thoạt nhìn giống thiên lệch hệ thống.
-Kiểm bằng cách tăng số probe thì hoá ra **chỉ là phương sai Hutchinson**:
+The ρ̂/ρ ratio is **constant within a shape but differs between shapes**, which initially looks like a
+systematic bias. Increasing the probe count shows it is **only Hutchinson variance**:
 
-| probe P | ρ̂/ρ (K=4096, ca lệch nhất) | chi phí ở M=N=8192 |
+| probes P | ρ̂/ρ (K=4096, worst case) | cost at M=N=8192 |
 |---|---|---|
 | 8 | 1.56 – 1.64 | 0.2% |
-| 64 | **1.10** (hằng số qua 5 bậc ρ) | 1.6% |
+| 64 | **1.10** (constant across 5 orders of ρ) | 1.6% |
 | 256 | **0.99 – 1.00** | 6.3% |
 
-Chi phí probe là `2·P·K·(M+N)` so với `2·M·N·K` của GEMM ⇒ tỉ lệ `2P/M` với ma trận vuông.
-**P=64 là điểm vận hành tốt: ρ̂ sai 10% ở chi phí 1.6%** — thừa đủ, vì ranh giới quyết định nằm cách nhau
-*bậc độ lớn* chứ không phải phần trăm.
+Probe cost is `2·P·K·(M+N)` against `2·M·N·K` for the GEMM ⇒ a ratio of `2P/M` for square matrices.
+**P=64 is a good operating point: ρ̂ within 10% at 1.6% cost** — more than enough, since the decision
+boundaries are *orders of magnitude* apart, not percentages.
 
 ---
 
----
+# ⚠ Family 2 overturns the conclusions above — this is the data to trust
 
-# ⚠️ FAMILY 2 LẬT NGƯỢC MỌI KẾT LUẬN Ở TRÊN — đây mới là số liệu đáng tin
+The suspicion recorded as open item #1 was checked and is **correct**. Family 1 drives `B→±1` and
+`A→1` as ρ grows, and bf16 represents ±1 **exactly** — so the entire curve shape was an artifact.
 
-Nghi vấn ở mục "Còn nợ #1" đã được kiểm và **đúng**. Family 1 dồn `B→±1`, `A→1` khi ρ lớn, mà bf16 biểu diễn
-±1 **chính xác tuyệt đối** — nên toàn bộ hình dạng đường cong là hiện vật.
-
-**Family 2** (`A = [G | G]`, `B = [H ; −H + δ·G₂]`): phần lớn triệt tiêu nhau, `AB = δ·G·G₂`, còn `‖|A||B|‖`
-vẫn O(K) ⇒ ρ điều khiển được bằng δ, và **mọi giá trị lưu trữ đều là N(0,1) generic**, không có gì nằm trên
-số biểu diễn được.
+**Family 2** (`A = [G | G]`, `B = [H ; −H + δ·G₂]`): most terms cancel, `AB = δ·G·G₂`, while
+`‖|A||B|‖` stays O(K) ⇒ ρ is controlled by δ, and **every stored value is generic N(0,1)**, with
+nothing landing on an exactly representable number.
 
 **M=N=2048, K=16384, P=64:**
 
@@ -131,18 +136,19 @@ số biểu diễn được.
 | 1.64e+04 | 3.262e-04 | 7.565e-04 | 1.483e-04 | 1.716e-04 | 2.32× |
 | 1.05e+06 | 2.087e-02 | 3.423e-02 | 9.307e-03 | 1.087e-02 | 1.64× |
 
-### Ba đính chính
+### Three corrections
 
-1. **bf16×6 giờ SUY GIẢM theo ρ** (7.4e-7 → 9.3e-3), đúng như vật lý bắt buộc — thay vì *tốt lên* tới
-   2.5e-8 như family 1. **Hiện vật được xác nhận và loại bỏ.**
-2. **Không có bướu, không có đỉnh 31×, không có "vùng nguy hiểm ở giữa".** Tỉ số bf16×3/fp32 gần như
-   **phẳng ở 2.3–2.8×** và còn giảm nhẹ theo ρ. Mục "kết quả 2" ở trên **SAI** — nó mô tả một hiện vật.
-3. **"35× tệ hơn" của Round 9 cũng thuộc về cùng hiện vật đó.** Trên dữ liệu generic, hình phạt của bf16×3
-   chỉ là **~2.3× và gần như không phụ thuộc ρ**.
+1. **bf16×6 now DEGRADES with ρ** (7.4e-7 → 9.3e-3), as physics requires — instead of *improving* to
+   2.5e-8 as in family 1. The artifact is confirmed and removed.
+2. **No hump, no 31× peak, no "dangerous middle region".** The bf16×3/fp32 ratio is nearly **flat at
+   2.3–2.8×** and even decreases slightly with ρ. Result 2 above is **wrong** — it describes an
+   artifact.
+3. **Round 9's "35× worse" belongs to the same artifact.** On generic data bf16×3's penalty is only
+   **~2.3× and almost independent of ρ**.
 
-### 🏆 Và cái thu được thay vào đó tốt hơn nhiều: ρ là biến cơ bản, không phải K
+### What replaces it is better: ρ is the fundamental variable, not K
 
-Tính `c = err/ρ`:
+Computing `c = err/ρ`:
 
 | ρ | c_fp32 | c_bf16×3 | c_bf16×6 | c_fp16×3 |
 |---|---|---|---|---|
@@ -150,27 +156,26 @@ Tính `c = err/ρ`:
 | 1.64e+04 | **1.989e-08** | 4.61e-08 | **9.04e-09** | **1.046e-08** |
 | 1.05e+06 | **1.990e-08** | 3.26e-08 | 8.87e-09 | 1.036e-08 |
 
-**`err = c·ρ`, c hằng số tới 4 chữ số qua 3 bậc độ lớn.** Và `c_bf16×6 = 0.45×`, `c_fp16×3 = 0.53×` so với
-fp32 — **khớp đúng phát hiện "a/2" của Round 9** (kernel low-precision cộng dồn tốt gấp đôi kernel fp32
-mặc định), thu được từ một thí nghiệm hoàn toàn độc lập.
+**`err = c·ρ`, with c constant to four digits across three orders of magnitude.** And
+`c_bf16×6 = 0.45×`, `c_fp16×3 = 0.53×` relative to fp32 — **matching Round 9's "a/2" finding** (the
+low-precision kernels accumulate twice as well as the default fp32 kernel), recovered from a fully
+independent experiment.
 
-**Vì sao điều này quan trọng:** mô hình cũ `err = a·√(K/c)` hoạt động chỉ vì với dữ liệu iid thì
-**ρ ≈ 0.64·√K** — tức `√K` chỉ là ρ đội lốt. Mô hình đúng là:
+**Why this matters:** the old model `err = a·√(K/c)` worked only because for i.i.d. data
+**ρ ≈ 0.64·√K** — `√K` was ρ in disguise. The correct model is:
 
 ```
-err(scheme) = c_scheme · ρ        ρ đo được trước bằng 2 GEMM gầy, chi phí ~1.6%
+err(scheme) = c_scheme · ρ        ρ measured up front by 2 skinny GEMMs, ~1.6% cost
 ```
 
-⇒ Dispatcher nên lái theo **ρ đo được từ dữ liệu**, không phải theo **shape**. Đó là khác biệt giữa một mô
-hình chỉ đúng trên dữ liệu ngẫu nhiên và một mô hình dùng được trên dữ liệu thật.
-(Ngoại lệ: `c_bf16×3` không hằng hoàn toàn — giảm còn 3.26e-8 ở ρ=1e6, vì nó có sàn biểu diễn không tỉ lệ
-theo ρ. Cần một số hạng cộng thêm; chưa fit.)
+⇒ A dispatcher should steer on **ρ measured from the data**, not on **shape**. That is the difference
+between a model that holds on random data and one usable on real data.
+(Exception: `c_bf16×3` is not perfectly constant — it falls to 3.26e-8 at ρ=1e6, because it has a
+representation floor that does not scale with ρ. An additive term is needed; not yet fitted.)
 
----
+### The last piece: ρ and K are ORTHOGONAL axes
 
-### 🏆 Mảnh cuối: ρ và K là hai trục TRỰC GIAO
-
-Family 2 ở ba giá trị K, tỉ số bf16×3/fp32 (ρ từ 58 tới 1.05e6):
+Family 2 at three values of K, bf16×3/fp32 ratio (ρ from 58 to 1.05e6):
 
 | K | ρ=58 | ρ=260 | ρ=1.6e4 | ρ=1.05e6 |
 |---|---|---|---|---|
@@ -178,80 +183,87 @@ Family 2 ở ba giá trị K, tỉ số bf16×3/fp32 (ρ từ 58 tới 1.05e6):
 | 16 384 | 2.77× | 2.33× | 2.32× | 1.64× |
 | 65 536 | 1.41× | 1.25× | 1.19× | **0.88×** |
 
-**ρ nhân đều sai số của mọi lược đồ ⇒ nó KHÔNG đổi tỉ số giữa chúng.**
-**K mới là thứ quyết định tỉ số** — sàn biểu diễn của bf16×3 độc lập với K, còn sai số tích luỹ của fp32
-tăng theo K, nên ở K lớn fp32 đuổi kịp rồi bị vượt (0.88× ở K=65536).
+**ρ scales every scheme's error equally, so it does NOT change the ratio between them.**
+**K is what decides the ratio** — bf16×3's representation floor is independent of K, while fp32's
+accumulation error grows with K, so at large K fp32 catches up and then passes it (0.88× at K=65536).
 
-⇒ Dạng đúng của mô hình, tách biến:
+⇒ The correct separable form of the model:
 
 ```
 err(scheme, K, ρ)  ≈  ρ · f_scheme(K)
                        ^      ^
-                       |      +-- trục THUẬT TOÁN: quyết định lược đồ nào thắng
-                       +--------- trục DỮ LIỆU: nhân đều, đo trước được bằng 2 GEMM gầy
+                       |      +-- ALGORITHM axis: decides which scheme wins
+                       +--------- DATA axis: scales everything, measurable up front
 ```
 
-Đây chính là câu chuyện giao điểm của Round 8/9, nay được tách sạch khỏi ảnh hưởng của dữ liệu.
-`c_fp32` đo được: 1.40e-8 (K=4096), 1.99e-8 (K=16384), 1.99e-8 (K=65536) — bão hoà, không hoàn toàn hằng.
+This is the crossover story of Rounds 8 and 9, now cleanly separated from the influence of the data.
+Measured `c_fp32`: 1.40e-8 (K=4096), 1.99e-8 (K=16384), 1.99e-8 (K=65536) — saturating, not perfectly
+constant.
 
-**Hệ quả thực dụng cho dispatcher:** chọn **lược đồ** theo `K` và ngưỡng sai số; dùng `ρ` đo được để **dự
-báo sai số tuyệt đối sẽ nhận được** và từ chối nếu vượt yêu cầu. Hai vai trò khác nhau, đừng trộn.
-
----
-
-## Còn nợ, xếp theo mức độ đe doạ kết luận
-
-1. **Cấu trúc ma trận có tính đặc biệt đáng ngờ.** Khi ρ lớn, `B → ±1` và `A → 1`, mà **bf16 biểu diễn ±1
-   CHÍNH XÁC**. Điều này gần như chắc chắn là lý do **bf16×6 lại TỐT LÊN theo ρ** (1.03e-6 → 2.54e-8) —
-   một kết quả không đáng tin, gần như chắc chắn là hiện vật của cách dựng. **Phải chạy lại với họ ma trận
-   thứ hai không có giá trị nằm đúng trên số biểu diễn được.**
-2. Mới quét một (M,N,K); các lần chạy K=65536, K=4096, M=4096 đang chạy.
-3. Chưa nối probe ρ̂ vào `emugemm` — mới chứng minh nó đo đúng, chưa chứng minh nó *quyết định* đúng.
-4. Chưa có ánh xạ ρ→ngưỡng an toàn cho từng lược đồ (cần mục 1 xong trước).
+**Practical consequence for the dispatcher:** choose the **scheme** from `K` and the error threshold;
+use the measured `ρ` to **predict the absolute error that will be delivered** and refuse if it exceeds
+the requirement. Two distinct roles; do not conflate them.
 
 ---
 
-# Phase cuối — nối ρ vào thư viện, và bài kiểm nghiệm thu
+## Open items, ordered by how much they threaten the conclusions
 
-`emugemm` nay đo ρ trước khi cam kết (`emugemm_estimate_rho`, Hutchinson 64 probe, ~1.6%), và áp
-`err = err_iid(K,c) · ρ/ρ_ref(K)` với `ρ_ref = 0.64√K`. Hai vai trò tách bạch đúng như Round 10 kết luận:
-**K chọn lược đồ, ρ quyết định lược đồ đó có giữ được lời hứa không.**
+1. **The matrix construction is suspiciously special.** At large ρ, `B → ±1` and `A → 1`, and **bf16
+   represents ±1 exactly**. This is almost certainly why **bf16×6 improves with ρ** (1.03e-6 →
+   2.54e-8) — an untrustworthy result, near-certainly an artifact of the construction. **Must be
+   re-run with a second matrix family whose values do not land on exactly representable numbers.**
+   *(Done — see the family 2 section above, which confirms the artifact.)*
+2. Only one (M,N,K) swept so far; the K=65536, K=4096 and M=4096 runs are in progress.
+3. The ρ̂ probe is not yet wired into `emugemm` — it has been shown to measure correctly, not to
+   *decide* correctly.
+4. No ρ→safe-threshold mapping per scheme yet (needs item 1 first).
 
-**Không hồi quy trên dữ liệu lành:** chạy lại `emugemm_test` (iid N(0,1)) cho **0 vi phạm**, lựa chọn/sai số/
-thời gian không đổi — vì ρ≈ρ_ref nên hệ số hiệu chỉnh ≈1. Probe không làm gì khi không cần.
+---
 
-**Bài kiểm nghiệm thu (`emu_adversarial.cpp`)** — dữ liệu family 2, ρ từ 1e2 tới 1.1e6, M=N=2048, K=16384:
+# Final phase — wiring ρ into the library, and an acceptance test
 
-| ρ đo | target | lược đồ chọn | dự đoán | đo được | hợp đồng |
+`emugemm` now measures ρ before committing (`emugemm_estimate_rho`, 64 Hutchinson probes, ~1.6%) and
+applies `err = err_iid(K,c) · ρ/ρ_ref(K)` with `ρ_ref = 0.64√K`. The two roles are separated exactly
+as Round 10 concluded: **K chooses the scheme, ρ decides whether that scheme can keep its promise.**
+
+**No regression on benign data:** re-running `emugemm_test` (i.i.d. N(0,1)) gives **0 violations**,
+with selection, error and time unchanged — because ρ≈ρ_ref makes the correction factor ≈1. The probe
+does nothing when nothing is needed.
+
+**Acceptance test (`emu_adversarial.cpp`)** — family 2 data, ρ from 1e2 to 1.1e6, M=N=2048, K=16384:
+
+| measured ρ | target | scheme chosen | predicted | measured | contract |
 |---|---|---|---|---|---|
-| 1.41e+02 | 1e-05 | NATIVE_FP32 | 3.944e-06 | 2.563e-06 | đạt |
-| 1.12e+03 | 1e-05 | FP32_CHUNKED c=32 | 5.537e-06 | 4.995e-06 | đạt |
-| 1.12e+03 | 1e-04 | NATIVE_FP32 | 3.132e-05 | 1.998e-05 | đạt |
-| 1.12e+04 | 1e-05 | — | 1.951e-05 | 1.771e-05 | **từ chối (đúng)** |
-| 1.12e+04 | 1e-04 | FP32_CHUNKED c=32 | 5.519e-05 | 4.981e-05 | đạt |
-| 1.12e+05 | 1e-05 / 1e-04 | — | 1.951e-04 | 1.772e-04 | **từ chối (đúng)** |
-| 1.12e+06 | 1e-05 / 1e-04 | — | 1.951e-03 | 1.770e-03 | **từ chối (đúng)** |
+| 1.41e+02 | 1e-05 | NATIVE_FP32 | 3.944e-06 | 2.563e-06 | met |
+| 1.12e+03 | 1e-05 | FP32_CHUNKED c=32 | 5.537e-06 | 4.995e-06 | met |
+| 1.12e+03 | 1e-04 | NATIVE_FP32 | 3.132e-05 | 1.998e-05 | met |
+| 1.12e+04 | 1e-05 | — | 1.951e-05 | 1.771e-05 | **refused (correctly)** |
+| 1.12e+04 | 1e-04 | FP32_CHUNKED c=32 | 5.519e-05 | 4.981e-05 | met |
+| 1.12e+05 | 1e-05 / 1e-04 | — | 1.951e-04 | 1.772e-04 | **refused (correctly)** |
+| 1.12e+06 | 1e-05 / 1e-04 | — | 1.951e-03 | 1.770e-03 | **refused (correctly)** |
 
-**0 vi phạm hợp đồng.** Dự đoán bảo thủ nhất quán ~10% qua ba bậc — sai về phía an toàn.
-Ở ρ=1120/target 1e-5 nó **leo thang sang chunked để giữ lời hứa**; ở cùng ρ với target 1e-4 nó **không trả
-thừa**. Mọi lần từ chối đều được số đo xác nhận là thật sự bất khả thi.
+**0 contract violations.** The prediction is consistently ~10% conservative across three orders of
+magnitude — erring safe. At ρ=1120 with target 1e-5 it **escalates to chunked to keep the promise**;
+at the same ρ with target 1e-4 it does **not** overpay. Every refusal is confirmed by measurement to
+be genuinely impossible.
 
-⇒ **Lỗ hổng "emugemm không an toàn cho dữ liệu điều kiện xấu" (còn nợ #1 của Round 9) đã đóng.**
-Thư viện giờ không bao giờ hứa một độ chính xác nó không giao được — nó từ chối. Từ chối là hợp lệ, nói dối
-thì không.
+⇒ **Round 9's open item #1 — "emugemm is not safe for ill-conditioned data" — is closed.** The library
+never promises an accuracy it cannot deliver; it refuses. Refusing is valid, lying is not.
 
 ---
 
-# Family 3 — cơ chế triệt tiêu thứ ba, và nó SỬA mô hình của family 2
+# Family 3 — a third cancellation mechanism, which corrects family 2's model
 
-Family 1 hỏng vì giá trị dồn về ±1 (bf16 biểu diễn chính xác). Family 2 sạch về giá trị nhưng vẫn có
-**khối lặp** trong A và triệt tiêu bằng **khử đại số chính xác** (`H` với `−H`). Family 3 tạo triệt tiêu
-bằng **cơ chế vật lý**: hàng của A là hàm trơn (`e^{-ax}(1+b·sin πx)`), cột của B là dao động
-`cos(2πfx+φ)`. Tích trong của chúng là một **tích phân dao động** — đúng cơ chế làm quadrature và toán tử
-vi phân trở nên ill-conditioned. ρ điều khiển bằng **tần số** (`ρ ~ f²`), không bằng thành phần DC.
+Family 1 failed because values collapse to ±1 (represented exactly in bf16). Family 2 is clean in its
+values but still contains **repeated blocks** in A and cancels by **exact algebraic annihilation**
+(`H` against `−H`). Family 3 creates cancellation by a **physical mechanism**: rows of A are smooth
+functions (`e^{-ax}(1+b·sin πx)`), columns of B are oscillatory (`cos(2πfx+φ)`). Their inner product
+is an **oscillatory integral** — the mechanism that makes quadrature and differential operators
+ill-conditioned. ρ is controlled by **frequency** (`ρ ~ f²`), not by a DC component.
 
-*(Lần thử đầu để nhiễu `0.1·g` trong A và bão hoà ở ρ=20: nhiễu **không trơn** nên không triệt tiêu với
-dao động, tạo thành sàn. Phải bỏ nhiễu — bản thân điều này đã xác nhận cơ chế đúng như dự định.)*
+*(A first attempt kept `0.1·g` noise in A and saturated at ρ=20: the noise is **not smooth**, so it
+does not cancel against oscillation and forms a floor. Removing it was necessary — which itself
+confirms the mechanism works as intended.)*
 
 **M=N=2048, K=16384, P=64:**
 
@@ -264,41 +276,43 @@ dao động, tạo thành sàn. Phải bỏ nhiễu — bản thân điều này
 | 1 515 | 4.387e-06 | 5.204e-05 | 9.670e-07 | 4.949e-06 | 11.9× |
 | 3 019 | **4.287e-06** | 1.034e-04 | 7.310e-07 | 8.838e-06 | 24.1× |
 
-## Kết quả: `err = c·ρ` chỉ đúng cho lược đồ bị chặn bởi BIỂU DIỄN
+## Result: `err = c·ρ` holds only for schemes bounded by REPRESENTATION
 
-| | family 2 (khử đại số) | family 3 (tích phân dao động) |
+| | family 2 (algebraic annihilation) | family 3 (oscillatory integral) |
 |---|---|---|
-| **fp32** | `1.989e-8 · ρ` | **PHẲNG ~4.4e-6**, không phụ thuộc ρ |
-| **bf16×3** | `≈ 3.3–4.6e-8 · ρ` | **`≈ 3.4e-8 · ρ`** ✓ khớp |
+| **fp32** | `1.989e-8 · ρ` | **FLAT at ~4.4e-6**, independent of ρ |
+| **bf16×3** | `≈ 3.3–4.6e-8 · ρ` | **`≈ 3.4e-8 · ρ`** — matches |
 
-**bf16×3 tuân theo `c·ρ` với cùng hằng số trong cả hai họ**, dù cơ chế triệt tiêu hoàn toàn khác nhau.
-**fp32 thì không.** Lý do:
+**bf16×3 follows `c·ρ` with the same constant in both families**, despite entirely different
+cancellation mechanisms. **fp32 does not.** The reason:
 
-- Sai số **biểu diễn** là một tỉ lệ cố định của `|a||b|`, nên **luôn** tỉ lệ với `‖|A||B|‖ = ρ‖C‖`,
-  bất kể thứ tự cộng dồn. ⇒ bf16×3 (bị chặn bởi biểu diễn) luôn ∝ ρ.
-- Sai số **tích luỹ** phụ thuộc **tổng riêng phần lớn đến đâu trước khi triệt tiêu**. Family 2 triệt tiêu
-  *muộn* (tổng phình lên rồi mới khử) ⇒ lỗi làm tròn tỉ lệ với độ lớn trung gian ⇒ fp32 ∝ ρ.
-  Family 3 triệt tiêu *phân tán* (dao động, tổng riêng phần luôn nhỏ) ⇒ fp32 phẳng.
+- **Representation** error is a fixed fraction of `|a||b|`, so it is **always** proportional to
+  `‖|A||B|‖ = ρ‖C‖`, regardless of summation order. ⇒ bf16×3, being representation-bound, is always
+  ∝ ρ.
+- **Accumulation** error depends on **how large the partial sums get before cancelling**. Family 2
+  cancels *late* (the sum inflates, then annihilates) ⇒ rounding error scales with the intermediate
+  magnitude ⇒ fp32 ∝ ρ. Family 3 cancels *diffusely* (oscillation keeps partial sums small) ⇒ fp32 is
+  flat.
 
-⇒ **ρ một mình KHÔNG xác định được sai số. Cấu trúc của sự triệt tiêu cũng quan trọng.**
+⇒ **ρ alone does not determine the error. The structure of the cancellation matters too.**
 
-## Điều này có phá hợp đồng của thư viện không? KHÔNG — nó lệch về phía an toàn
+## Does this break the library's contract? No — it errs safe
 
-Dispatcher nhân sai số dự đoán của **mọi** lược đồ với `ρ/ρ_ref`. Với bf16×3 thì đúng. Với fp32, ở cấu
-trúc kiểu family 3, nó **dự đoán tệ hơn thực tế** — tức dispatcher có thể **leo thang hoặc từ chối
-không cần thiết**, nhưng **không bao giờ giao thiếu**. Đây đúng là hướng sai an toàn.
+The dispatcher multiplies **every** scheme's predicted error by `ρ/ρ_ref`. For bf16×3 that is correct.
+For fp32 under family-3-like structure it **predicts worse than reality** — so the dispatcher may
+**escalate or refuse unnecessarily**, but it will **never under-deliver**. That is the safe direction.
 
-Cái mất là hiệu quả, không phải tính đúng đắn: có những bài toán fp32 thừa sức đạt target mà thư viện
-vẫn trả thêm thời gian. Ghi nhận là **giới hạn đã biết**, không phải lỗi.
+What is lost is efficiency, not correctness: there are problems where fp32 would comfortably hit the
+target and the library still spends extra time. Recorded as a **known limitation**, not a bug.
 
-## Ba họ, ba kết luận — và vì sao phải có cả ba
+## Three families, three conclusions — and why all three were necessary
 
-| họ | cơ chế | kết luận nếu chỉ có nó |
+| family | mechanism | conclusion if taken alone |
 |---|---|---|
-| 1 | dấu xen kẽ, giá trị → ±1 | "có bướu 31×" — **SAI, hiện vật** |
-| 2 | khử đại số `H`/`−H` | "`err = c·ρ` cho mọi lược đồ" — **đúng một nửa** |
-| 3 | tích phân dao động | "fp32 phẳng theo ρ" — đúng **cho cơ chế này** |
+| 1 | alternating signs, values → ±1 | "there is a 31× hump" — **wrong, an artifact** |
+| 2 | algebraic annihilation `H`/`−H` | "`err = c·ρ` for every scheme" — **half right** |
+| 3 | oscillatory integral | "fp32 is flat in ρ" — correct **for this mechanism** |
 
-Không họ nào một mình cho ra bức tranh đúng. Điều duy nhất **sống sót qua cả ba**: mọi đường
-low-precision có hằng số tích luỹ **bằng nửa fp32** (family 3 ở ρ thấp: bf16×3 = bf16×6 = 1.9e-6 so với
-fp32 2.8e-6), và **sai số biểu diễn của bf16×3 luôn ∝ ρ với c ≈ 3.4e-8**.
+No single family gives the right picture. What **survives all three**: every low-precision path has an
+accumulation constant **half that of fp32** (family 3 at low ρ: bf16×3 = bf16×6 = 1.9e-6 against
+fp32's 2.8e-6), and **bf16×3's representation error is always ∝ ρ with c ≈ 3.4e-8**.

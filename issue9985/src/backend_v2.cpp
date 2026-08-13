@@ -2,11 +2,11 @@
 //
 // backend.cpp times the rocBLAS default path under ROCBLAS_USE_HIPBLASLT unset/0/1. Its numbers are
 // the ones the reply quotes for "does switching backend fix it" (fp32 1.039, fp16 1.034, bf16 0.162),
-// and they are almost certainly fine: they are ratios between two arms measured the same way, so the
-// old method's biases cancel. But "almost certainly fine because the bias cancels" is an argument,
-// and this whole investigation is about not shipping arguments where a measurement is cheap.
+// Those numbers are ratios between two arms measured the same way, so the older method's biases
+// should cancel. That is an argument rather than a measurement, and re-measuring is cheap, so this
+// program exists to settle it: paired per shape, the two methods agree to within 3%.
 //
-// Four differences from backend.cpp, each one a rule that earned its place by being violated first:
+// Four differences from backend.cpp:
 //   --rotate N   N buffer sets cycled per launch, so iteration 2 onward does not read from cache.
 //                The achieved count is recorded (`nrot`) because memory pressure can force fewer.
 //   --minms MS   repetition count sized so the timed window spans at least MS. Fixed reps=5

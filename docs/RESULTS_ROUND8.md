@@ -1,14 +1,15 @@
-# Round 8 (2026-07-25) — giao điểm độ chính xác, và vá lỗ hổng shape
+# Round 8 (2026-07-25) — the accuracy crossover, and closing the shape gap
 
-Tiếp nối `RESULTS_2026-07-25.md` (Round 7). Phần cứng: node 8× GCD gfx90a (MI250), mỗi GCD 104 CU / 68.7 GB
-→ **549 GB tổng**. Container `ducmai-dev`, ROCm 7.2.3.
-File mới: `mfma_peak2.cpp` (+fp64), `crossover_test.cpp`, `rocblas_tune.cpp`, `emu_tuned.cpp`, `node_sweep.sh`.
+Continues `RESULTS_2026-07-25.md` (Round 7). Hardware: one node of 8× GCD gfx90a (MI250), 104 CU and
+68.7 GB per GCD → **549 GB total**. Container `ducmai-dev`, ROCm 7.2.3.
+New files: `mfma_peak2.cpp` (+fp64), `crossover_test.cpp`, `rocblas_tune.cpp`, `emu_tuned.cpp`,
+`node_sweep.sh`.
 
 ---
 
-## A. Bảng kinh tế phần cứng đã hoàn tất — hướng emulate FP64 ĐÓNG
+## A. The hardware economics table is complete — emulating FP64 is closed
 
-| lệnh | TFLOP/s | vs fp32 |
+| instruction | TFLOP/s | vs fp32 |
 |---|---|---|
 | **fp64** `mfma_16x16x4f64` | **41.7** | 0.98× |
 | fp32 `mfma_16x16x4f32` | 42.5 | 1.00× |
@@ -17,30 +18,35 @@ File mới: `mfma_peak2.cpp` (+fp64), `crossover_test.cpp`, `rocblas_tune.cpp`, 
 | bf16 `mfma_16x16x8bf16` (legacy) | 85.1 | 2.00× |
 | int8 `mfma_16x16x16i8` | 170.2 | 4.01× |
 
-**CDNA2 có fp64 matrix full-rate (= fp32).** Hệ quả, đo được chứ không suy từ datasheet:
+**CDNA2 has full-rate fp64 matrix throughput (equal to fp32).** The consequence, measured rather than
+inferred from the datasheet:
 
-| lược đồ emulate fp64 | trần | |
+| fp64 emulation scheme | ceiling | |
 |---|---|---|
-| từ fp32, ≥3 lát | 0.34× | **THUA** |
-| từ fp16, ~7 lát | 0.58× | **THUA** |
-| Ozaki-int8, ~9 moduli | 0.45× | **THUA** |
+| from fp32, ≥3 slices | 0.34× | **loses** |
+| from fp16, ~7 slices | 0.58× | **loses** |
+| Ozaki int8, ~9 moduli | 0.45× | **loses** |
 
-⇒ Trên MI250 **không có đường nào** để emulate fp64 có lãi. Hướng này đóng lại bằng phép đo, giống cách
-`mfma_peak.cpp` đóng hướng int8 ở Round 3.
+⇒ On MI250 **no route** to emulating fp64 is profitable. The direction is closed by measurement, the
+same way `mfma_peak.cpp` closed the int8 direction in Round 3.
 
 ---
 
-## B. Giao điểm độ chính xác — ⚠️ ĐÃ BỊ SỬA BỞI ROUND 9, đọc `RESULTS_ROUND9.md` trước
+## B. The accuracy crossover
 
-> **Đính chính:** mục B dưới đây đúng **chỉ khi so với GEMM fp32 mặc định của rocBLAS**. Round 9 (Phase 1)
-> cho fp32 cùng cách cộng dồn (chia K thành chunk, cộng chunk trong fp64) và **giao điểm biến mất**: fp32
-> không có sàn biểu diễn nên sai số của nó giảm mãi theo `1/√c` (xuống 5.73e-07), trong khi bf16×3 chạm sàn
-> cứng **4.4355e-06** và dừng. Cái còn nguyên: bf16×3 vẫn **1.20–1.22× nhanh hơn** ở cùng tầng chính xác và
-> là **điểm nhanh nhất trên biên Pareto**. Cái mất: tuyên bố *"chính xác hơn fp32"* ở dạng vô điều kiện.
+> **⚠ Corrected by Round 9 — read `RESULTS_ROUND9.md` before quoting anything from this section.**
+> What follows holds **only against rocBLAS's default fp32 GEMM**. Round 9 (Phase 1) gave fp32 the
+> same accumulation strategy (split K into chunks, sum the chunks in fp64) and **the crossover
+> disappears**: fp32 has no representation floor, so its error keeps falling as `1/√c` (down to
+> 5.73e-07), while bf16×3 hits a hard floor at **4.4355e-06** and stops. What survives: bf16×3 is
+> still **1.20–1.22× faster** at the same accuracy tier and is the fastest point on the Pareto
+> frontier. What does not: the unconditional claim *"more accurate than fp32"*.
 
-**Thiết lập:** M=N=4096, quét K = 2048 → 262144. **Chuẩn = rocBLAS DGEMM chạy ngay trên GPU**
-(khả thi vì fp64 full-rate; sai số chuẩn ~6e-14, dưới thang đo 8 bậc).
-**Chuẩn đã được kiểm ngược lại bằng vòng lặp fp64 trên CPU ở K=2048: khớp 1.355e-15.** ✓
+**Setup:** M=N=4096, sweeping K = 2048 → 262144. **Reference = rocBLAS DGEMM run on the GPU itself**
+(feasible because fp64 is full-rate; reference error ~6e-14, eight orders below the measurement
+scale). **The reference was cross-checked against an fp64 CPU loop at K=2048: agreement 1.355e-15.**
+
+The two bold bf16×3 entries are the rows where it overtakes fp32.
 
 | K | fp32 | **bf16×3** | bf16×6 | fp16×3 |
 |---|---|---|---|---|
@@ -50,157 +56,175 @@ File mới: `mfma_peak2.cpp` (+fp64), `crossover_test.cpp`, `rocblas_tune.cpp`, 
 | 16 384 | 2.290e-06 | 4.566e-06 | 1.090e-06 | 1.200e-06 |
 | 32 768 | 3.240e-06 | 4.712e-06 | 1.589e-06 | 1.660e-06 |
 | 65 536 | 4.581e-06 | 4.989e-06 | 2.289e-06 | 2.318e-06 |
-| **131 072** | 6.482e-06 | **5.511e-06** ⬅ | 3.273e-06 | 3.259e-06 |
-| **262 144** | 9.162e-06 | **6.417e-06** ⬅ | 4.637e-06 | 4.596e-06 |
+| **131 072** | 6.482e-06 | **5.511e-06** | 3.273e-06 | 3.259e-06 |
+| **262 144** | 9.162e-06 | **6.417e-06** | 4.637e-06 | 4.596e-06 |
 
-**Khớp lý thuyết:** fit `err_fp32 = 1.791e-08 · K^0.4999` qua 8 điểm — lý thuyết tích luỹ làm tròn dự đoán
-đúng **p = 0.5**, khớp tới 4 chữ số. **Giao điểm đo được K ≈ 76 500** (dự đoán trước khi chạy: 62 000,
-lệch 25% — hợp lý cho một ngoại suy từ 2 điểm).
+**Agreement with theory:** fitting `err_fp32 = 1.791e-08 · K^0.4999` over the eight points recovers
+the rounding-accumulation exponent **p = 0.5** to four digits. **Measured crossover at K ≈ 76 500**
+(predicted before the run: 62 000, 25% off — reasonable for an extrapolation from two points).
 
-> **⚠️ Cột tốc độ của `crossover_test` KHÔNG dùng để trích dẫn.** Nó chạy solution **mặc định** cho mọi biến
-> thể, mà mục C dưới đây chứng minh solution mặc định có thể sai lệch tới 1.7×. Ở shape K-lớn này fp32 dao
-> động 19–35 TF thuần tuý do chọn kernel. **Con số tốc độ chính thức là của `emu_tuned` (đã tune cả hai phía).**
-> Phần độ chính xác **không** bị ảnh hưởng: sai số bf16 giống nhau qua cả 388 solution (spread 1.00×), và
-> sai số fp32 mặc định trùng đúng với solution nhanh nhất.
+> **⚠ The speed column of `crossover_test` must not be quoted.** It runs the **default** solution for
+> every variant, and section C below shows the default can be off by up to 1.7×. At this large-K shape
+> fp32 ranges 19–35 TF on kernel choice alone. **The speed numbers of record come from `emu_tuned`,
+> which tunes both sides.** Accuracy is unaffected: bf16 error is identical across all 388 solutions
+> (spread 1.00×), and the default fp32 error coincides with that of the fastest solution.
 
-**Vì sao bf16×3 là biến thể duy nhất phẳng:** sai số của nó bị chặn bởi **lỗi biểu diễn** (2 lát bf16 ⇒ ~2⁻¹⁶),
-độc lập với K. fp32, bf16×6 và fp16×3 đều có lỗi biểu diễn **dưới** ngưỡng tích luỹ nên đều bị **lỗi tích luỹ
-∝√K** chi phối. Ở K đủ lớn, thứ hằng số thắng thứ tăng dần.
+**Why bf16×3 is the only flat variant:** its error is bounded by **representation** error (two bf16
+slices ⇒ ~2⁻¹⁶), independent of K. fp32, bf16×6 and fp16×3 all have representation error *below* the
+accumulation threshold, so all three are dominated by **accumulation error ∝ √K**. At large enough K,
+the constant beats the growing term.
 
-### Kiểm confound (bắt buộc, đã ghi trong kế hoạch trước khi chạy)
+### Confound check (planned before the run)
 
-Nghi vấn: fp32 và low-precision có thể dùng chiến lược tích luỹ khác nhau (split-K), khiến "chiến thắng"
-đến từ chọn kernel chứ không từ định dạng số. Liệt kê **toàn bộ solution** của rocBLAS ở K=131072:
+The concern: fp32 and low precision might use different accumulation strategies (split-K), which
+would make the "win" a kernel-selection artifact rather than a property of the number format.
+Enumerating **every** rocBLAS solution at K=131072:
 
-| | số solution | spread sai số | ghi chú |
+| | solutions | error spread | note |
 |---|---|---|---|
-| fp32 | 562 | **2.00×** | chính xác nhất 3.240e-06 **nhưng chỉ 4.07 TF** |
-| bf16 | 388 | **1.00×** | mọi solution cho sai số y hệt |
+| fp32 | 562 | **2.00×** | most accurate 3.240e-06 **but only 4.07 TF** |
+| bf16 | 388 | **1.00×** | every solution gives identical error |
 
-- Sai số bf16 **không phụ thuộc** lựa chọn kernel ⇒ kết luận về bf16×3 vững.
-- fp32 **có** một solution chính xác gấp đôi (3.24e-6), nhưng nó chạy **4.07 TF — chậm 9×**. Đối chiếu:
-  fp64 **matrix peak đo được là 41.7 TF**; kể cả giả định hiệu suất thư viện thấp một cách bảo thủ (60%)
-  thì DGEMM vẫn ~25 TF, tức **nhanh hơn 6×** solution fp32 đó *và* chính xác hơn ~9 bậc. (Chưa đo trực tiếp
-  tốc độ DGEMM đạt được — đây là lập luận từ peak, đủ chắc vì biên tới 6×.) Solution fp32 "chính xác" đó
-  **bị chi phối hoàn toàn**, không phải một lựa chọn thực tế.
-- ⇒ So với fp32 mà **người dùng thật sự nhận được** (mặc định = nhanh nhất = 6.48e-6), giao điểm đứng vững.
+- bf16 error is **independent** of kernel choice, so the bf16×3 conclusion holds.
+- fp32 **does** have one solution twice as accurate (3.24e-6), but it runs at **4.07 TF — 9× slower**.
+  For comparison: measured fp64 matrix peak is **41.7 TF**; even assuming a conservatively low library
+  efficiency of 60%, DGEMM would still reach ~25 TF, i.e. **6× faster** than that fp32 solution *and*
+  nine orders more accurate. (Achieved DGEMM speed was not measured directly — this is an argument
+  from peak, safe given the 6× margin.) That "accurate" fp32 solution is strictly dominated and is not
+  a realistic choice.
+- ⇒ Against the fp32 a user actually gets (default = fastest = 6.48e-6), the crossover stands.
 
-**Phát biểu đúng của kết quả:** *ở tốc độ ngang hoặc nhanh hơn, bf16×3 chính xác hơn native fp32 khi
-K ≳ 76 000; muốn fp32 chính xác hơn thì phải trả giá 9× tốc độ, mà ở mức đó fp64 native đã tốt hơn về mọi mặt.*
+**Correct statement of the result:** *at equal or better speed, bf16×3 is more accurate than native
+fp32 for K ≳ 76 000; obtaining more accurate fp32 costs a 9× slowdown, at which point native fp64 is
+better on every axis.*
 
-### Giới hạn của kết quả này (phải nói kèm)
+### Limits of this result
 
-- **Dữ liệu là N(0,1) độc lập.** Với dữ liệu đó lỗi tích luỹ của fp32 tăng theo **√K** vì các lỗi làm tròn
-  triệt tiêu lẫn nhau như bước ngẫu nhiên. Với dữ liệu **cùng dấu / có tương quan**, lỗi tích luỹ tăng theo
-  **O(K)** chứ không phải √K, nên **giao điểm sẽ đến SỚM HƠN**. Tức N(0,1) là trường hợp **thuận lợi cho fp32**
-  — kết quả của ta là cận trên thận trọng, không phải cherry-pick.
-- Sai số của bf16×3 phẳng vì bị chặn bởi lỗi **biểu diễn**, đại lượng này ổn định theo phân bố dữ liệu; nhưng
-  chuẩn Frobenius chuẩn hoá theo ‖C‖ nên với dữ liệu có triệt tiêu mạnh ở đầu ra, cả hai đường đều dịch lên.
-  **Chưa đo** với phân bố khác N(0,1) ở K lớn.
-- K ≈ 76 000 là **rất lớn** cho GEMM đơn lẻ trong ML (hidden size thường ≤ 30k). Chế độ này thực tế với
-  **HPC / tổng chập dài / tích luỹ theo batch**, không phải một lớp linear điển hình.
+- **The data is i.i.d. N(0,1).** Under that distribution fp32's accumulation error grows as **√K**
+  because rounding errors cancel like a random walk. For **same-sign or correlated** data the growth
+  is **O(K)** rather than √K, so **the crossover arrives earlier**. N(0,1) is therefore the case most
+  favourable to fp32 — this is a conservative upper bound, not a cherry-pick.
+- bf16×3's error is flat because it is bounded by **representation** error, which is stable across
+  data distributions; but the Frobenius norm is normalised by ‖C‖, so with strong output cancellation
+  both curves shift upward. **Not measured** for distributions other than N(0,1) at large K.
+- K ≈ 76 000 is **very large** for a single ML GEMM (hidden sizes are typically ≤ 30k). This regime is
+  realistic for **HPC, long convolutions, batch accumulation**, not a typical linear layer.
 
 ---
 
-## C. Vá lỗ hổng shape — 0.71× thành 1.21×
+## C. Closing the shape gap — 0.71× becomes 1.21×
 
-Round 7 để lại một thất bại: bf16×3 chỉ đạt 0.74× ở shape MLP vì kernel bf16 mặc định của rocBLAS sụp
-xuống 82 TF. `rocblas_gemm_ex_get_solutions` cho phép liệt kê và đo từng solution.
+Round 7 left a failure behind: bf16×3 reached only 0.74× on the MLP shape because rocBLAS's default
+bf16 kernel collapsed to 82 TF. `rocblas_gemm_ex_get_solutions` allows enumerating and timing each
+solution individually.
 
-**Chẩn đoán (`rocblas_tune`, M=8192 N=28672 K=8192, bf16):**
+**Diagnosis (`rocblas_tune`, M=8192 N=28672 K=8192, bf16):**
 
 | | ms | TFLOP/s |
 |---|---|---|
-| mặc định | 45.88 | 83.9 (tái lập đúng 82.0 của Round 7 ✓) |
-| **tốt nhất / 388 solution** | 27.92 | **137.8 = 81.5% peak** |
+| default | 45.88 | 83.9 (reproduces Round 7's 82.0) |
+| **best of 388 solutions** | 27.92 | **137.8 = 81.5% of peak** |
 
-Heuristic mặc định bỏ phí **1.64×**. Và ở cả shape vuông K=131072 nó cũng bỏ phí **1.58×** (76.9 → 121.3 TF)
-⇒ đây là vấn đề **diện rộng của heuristic bf16 rocBLAS**, không riêng shape MLP.
+The default heuristic leaves **1.64×** on the table. At the square K=131072 shape it leaves **1.58×**
+(76.9 → 121.3 TF), so this is a **broad property of the rocBLAS bf16 heuristic**, not specific to the
+MLP shape.
 
-**Xác minh đầu-cuối (`emu_tuned`) trên CẢ BA shape — baseline fp32 CŨNG được tune cho công bằng:**
+**End-to-end verification (`emu_tuned`) on all three shapes — the fp32 baseline is tuned too, for
+fairness:**
 
-| shape | fp32 mặc định | **fp32 tune (baseline)** | bf16×3 mặc định | **bf16×3 tune** | kết quả |
+| shape | fp32 default | **fp32 tuned (baseline)** | bf16×3 default | **bf16×3 tuned** | result |
 |---|---|---|---|---|---|
-| M=8192 N=28672 K=8192 (MLP) | 21.57 | **37.52** | 26.48 (0.71×) | **45.33** | **1.21×** ✅ |
-| M=16384 N=8192 K=8192 | 36.94 | **37.03** | 37.72 (1.02×) | **44.26** | **1.20×** ✅ |
-| M=N=K=12288 (vuông) | 37.06 | **37.02** | 37.44 (1.01×) | **45.06** | **1.22×** ✅ |
+| M=8192 N=28672 K=8192 (MLP) | 21.57 | **37.52** | 26.48 (0.71×) | **45.33** | **1.21×** |
+| M=16384 N=8192 K=8192 | 36.94 | **37.03** | 37.72 (1.02×) | **44.26** | **1.20×** |
+| M=N=K=12288 (square) | 37.06 | **37.02** | 37.44 (1.01×) | **45.06** | **1.22×** |
 
-Sai số không đổi khi tune (bf16×3: 4.495e-06 / 4.495e-06 / 4.530e-06).
+Error is unchanged by tuning (bf16×3: 4.495e-06 / 4.495e-06 / 4.530e-06).
 
-**Hai kết luận từ bảng này:**
-1. **bf16×3 = 1.20–1.22× trên MỌI shape đã thử** — đồng đều đến bất ngờ, một khi solution bf16 được tune.
-   Lỗ hổng shape của Round 7 **hoàn toàn là lỗi chọn kernel**, không phải giới hạn kỹ thuật.
-2. **Heuristic của rocBLAS kém ở bf16 nhưng tốt ở fp32.** Tune nâng bf16×3 lên 1.71× / 1.17× / 1.20×, còn
-   fp32 hầu như không đổi ở hai shape vuông-ish (37.06→37.02; 36.94→37.03) và chỉ nhảy vọt ở shape MLP
-   (21.57→37.52). ⇒ vấn đề nằm ở **đường bf16**, đúng hướng với mục E.
+**Two conclusions:**
+
+1. **bf16×3 gives 1.20–1.22× on every shape tried** — strikingly uniform, once the bf16 solution is
+   tuned. Round 7's shape gap was **entirely a kernel-selection artifact**, not a technical limit.
+2. **The rocBLAS heuristic is weak for bf16 and strong for fp32.** Tuning lifts bf16×3 by 1.71× /
+   1.17× / 1.20×, while fp32 barely moves on the two squarish shapes (37.06→37.02; 36.94→37.03) and
+   jumps only on the MLP shape (21.57→37.52). The problem is on the **bf16 path**, consistent with
+   section E.
 
 ---
 
-## D. Cả node — lợi thế có sống sót khi 8 GCD cùng chạy hết công suất không?
+## D. Whole node — does the advantage survive with all 8 GCDs saturated?
 
-Câu hỏi thật: 8 GCD là **4 card hai-die dùng chung ngân sách điện**, và Round 7 đã đo được bf16×3 **tốn thêm
-11% điện** so với fp32. Nên có lý do cụ thể để nghi lợi thế bị bào mòn khi cả bo mạch chạy hết.
-`node_sweep.sh`, N=8192³, mỗi GCD một tiến trình độc lập, **cả hai phía đều tune**.
+The question is concrete: the 8 GCDs are **4 dual-die cards sharing a power budget**, and Round 7
+measured bf16×3 drawing **11% more power** than fp32. So there is a specific reason to suspect the
+advantage erodes under full load. `node_sweep.sh`, N=8192³, one independent process per GCD, **both
+sides tuned**.
 
 | | fp32 | bf16×3 |
 |---|---|---|
-| 1 GCD chạy một mình | 37.02 TF | 43.96 TF (**1.19×**) |
-| **Tổng 8 GCD** | **278.4 TF** | **325.1 TF** (**1.17×**) |
-| % so với tuyến tính | **94.0%** | **92.4%** |
+| 1 GCD alone | 37.02 TF | 43.96 TF (**1.19×**) |
+| **8 GCDs, total** | **278.4 TF** | **325.1 TF** (**1.17×**) |
+| % of linear scaling | **94.0%** | **92.4%** |
 
-**Lợi thế sống sót: 1.19× → 1.17×.** Cả hai mất 6–8% khi cả bo mạch chạy hết, và **bf16×3 mất nhiều hơn một
-chút (92.4% vs 94.0%)** — khớp đúng với phép đo điện ở Round 7 (bf16×3 tốn thêm 11% điện, nên chạm trần công
-suất sớm hơn). Hai phép đo độc lập chỉ về cùng một cơ chế.
+**The advantage survives: 1.19× → 1.17×.** Both lose 6–8% under full load, and **bf16×3 loses slightly
+more (92.4% vs 94.0%)** — consistent with Round 7's power measurement (bf16×3 draws 11% more, so it
+reaches the power ceiling sooner). Two independent measurements point at the same mechanism.
 
-**Cảnh báo về phương pháp:** mỗi tiến trình tự tune **trong lúc 7 tiến trình kia đang chạy**, nên phép đo
-chọn solution bị nhiễu — thấy rõ ở độ tán của bf16×3 giữa các GCD (37.6–44.3 TF) so với fp32 (32.8–36.1 TF).
-Con số tổng vẫn dùng được, nhưng số của **từng** GCD thì không nên trích riêng lẻ.
+**Methodological caveat:** each process tunes **while the other seven are running**, so solution
+selection is measured under contention. This shows in the spread of bf16×3 across GCDs (37.6–44.3 TF)
+against fp32 (32.8–36.1 TF). The aggregate number is usable; **per-GCD** numbers should not be quoted
+individually.
 
-**Chưa làm:** trình diễn một GEMM đơn lẻ lớn nhất mà 549 GB cho phép. Phép quét này chỉ dùng ~3.3 GB/GCD;
-bộ nhớ **không** phải yếu tố ràng buộc ở đây. Muốn làm cần một harness nhẹ hơn — `emu_tuned` phải đo ~950
-solution nên ở N=32768 sẽ mất ~90 phút/GCD. Ghi nhận là **chưa đo**, không phải đã đo.
+**Not done:** demonstrating the largest single GEMM the 549 GB allows. This sweep uses only ~3.3 GB
+per GCD, so memory is **not** the binding constraint here. Doing it needs a lighter harness —
+`emu_tuned` times ~950 solutions, which at N=32768 would take ~90 minutes per GCD. Recorded as **not
+measured**, not as measured.
 
 ---
 
-## E. hipBLASLt bf16 — giả thuyết của tôi ĐÃ BỊ BÁC BỎ, cơ chế vẫn chưa xác định
+## E. hipBLASLt bf16 — the hypothesis was refuted; the mechanism is still unidentified
 
-Vào Round 8 tôi mang theo giả thuyết: *hipBLASLt rơi về kernel non-MFMA cho bf16 trên gfx90a* (dựa trên
-triệu chứng 25% peak + 10 algo, và câu trong tài liệu AMD *"Not all problem sizes may select MFMA-based
-kernels"*). Đọc thẳng thư viện Tensile đã ship thì **giả thuyết sai**.
+Round 8 began with the hypothesis that *hipBLASLt falls back to non-MFMA kernels for bf16 on gfx90a*,
+based on the symptom (25% of peak, 10 algorithms offered) and AMD's documented note that *"Not all
+problem sizes may select MFMA-based kernels"*. Reading the shipped Tensile library directly shows the
+hypothesis is **wrong**.
 
-**Đã LOẠI TRỪ được hai cơ chế:**
+**Two mechanisms ruled out:**
 
-1. **Không phải "rơi về non-MFMA".** Trích tên kernel thật từ `/opt/rocm/lib/hipblaslt/library/`:
+1. **Not a fallback to non-MFMA.** Extracting actual kernel names from
+   `/opt/rocm/lib/hipblaslt/library/`:
    `Cijk_Ailk_Bljk_BBS_BH_..._MT64x16x32_MI16x16x1_...ISA90a...`
-   Trong một file thư viện bf16 NN: **1912 kernel, cả 1912 đều có `_MI` (MFMA)**. Không có kernel nào không MFMA.
-2. **Không phải "thiếu kernel tốt".** Phân bố macro-tile của bf16 tương đương fp16, có đủ tile lớn
-   (`MT256x64x32`, `MT96x160x64`, `MT128x96x64`, …). bf16 **không** nghèo kernel.
+   In one bf16 NN library file: **1912 kernels, all 1912 carry `_MI` (MFMA)**. There is no non-MFMA
+   kernel to fall back to.
+2. **Not a shortage of good kernels.** The bf16 macro-tile distribution matches fp16 and includes
+   large tiles (`MT256x64x32`, `MT96x160x64`, `MT128x96x64`, …). bf16 is **not** kernel-poor.
 
-**Cái vẫn đúng (tái lập được, đo nhiều lần):**
+**What still holds (reproducible, measured repeatedly):**
 
-| | tốt nhất đo được | % của 169.1 TF |
+| | best measured | % of 169.1 TF |
 |---|---|---|
 | hipBLASLt bf16 (NN, gfx90a) | 41.8 TF | **25%** |
-| rocBLAS bf16 (cùng phần cứng, cũng MFMA) | 137.8 TF | **81.5%** |
+| rocBLAS bf16 (same hardware, also MFMA) | 137.8 TF | **81.5%** |
 | hipBLASLt fp16 | 137.0 TF | 81% |
 
-và hipBLASLt chỉ đưa ra **10 algo ứng viên** cho bf16 NN trong khi fp16/fp32 đều chạm trần 48 ta xin.
+and hipBLASLt returns only **10 candidate algorithms** for bf16 NN, while fp16 and fp32 both hit the
+requested cap of 48.
 
-**Kết luận đúng mức:** khoảng cách là **thật, lớn (3.3×) và tái lập được**, và nó **không** do thiếu kernel
-MFMA — nhưng **cơ chế chưa được xác định**. Nó nằm ở tầng chọn solution/heuristic của hipBLASLt cho bf16 NN
-trên gfx90a, chỗ ta chưa quan sát được (`HIPBLASLT_LOG_LEVEL=4` chỉ in đường dẫn thư viện chứ không in tên
-solution được chọn; container không có `hipblaslt-bench` lẫn `rocblas-gemm-tune`).
+**Conclusion at the right strength:** the gap is **real, large (3.3×) and reproducible**, and it is
+**not** caused by missing MFMA kernels — but **the mechanism is unidentified**. It lies in hipBLASLt's
+solution-selection layer for bf16 NN on gfx90a, which is not observable from here
+(`HIPBLASLT_LOG_LEVEL=4` prints the library path but not the selected solution; the container has
+neither `hipblaslt-bench` nor `rocblas-gemm-tune`).
 
-⇒ **Chưa nộp issue nào.** Có thể báo cáo *triệu chứng có thể tái lập* kèm phần đã loại trừ, nhưng
-**không được tuyên bố nguyên nhân**. Việc dùng được ngay: **dùng rocBLAS cho bf16, hipBLASLt cho fp16.**
+⇒ **No issue filed.** The *reproducible symptom* plus the ruled-out mechanisms could be reported, but
+**no cause may be claimed**. The immediately usable finding: **use rocBLAS for bf16, hipBLASLt for
+fp16.**
 
 ---
 
-## Bài học phương pháp mới trong Round 8
+## Method notes from Round 8
 
-1. **`| head` trên lệnh build giết compiler bằng SIGPIPE** — làm build "thất bại" mà không có thông báo lỗi
-   nào. Mất một vòng chẩn đoán. Đừng pipe output của trình biên dịch qua `head`.
-2. **Ghi tiến độ cho vòng lặp dài.** Bản `rocblas_tune` đầu tiên chỉ in ở cuối, chạy 12 phút không một dòng —
-   không phân biệt được "đang chạy" với "treo".
-3. **Tune cả hai phía.** Ở shape MLP, tune nâng fp32 từ 21.6 lên 37.5 TF. Nếu chỉ tune phía mình thì đã
-   tự tặng một chiến thắng giả 2.1×.
+1. **Piping a build command through `| head` kills the compiler with SIGPIPE** — the build "fails"
+   with no error message at all. Do not pipe compiler output through `head`.
+2. **Log progress in long loops.** The first `rocblas_tune` printed only at the end and ran 12 minutes
+   in silence, making "running" indistinguishable from "hung".
+3. **Tune both sides.** On the MLP shape, tuning lifts fp32 from 21.6 to 37.5 TF. Tuning only the
+   proposed method would have manufactured a false 2.1× win.

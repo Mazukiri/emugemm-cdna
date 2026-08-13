@@ -42,8 +42,9 @@
 //    We cannot set a fixed frequency without host admin rights, so instead we detect when the clock
 //    moved. A small reference GEMM is timed at the start and at the end of each shape; the ratio of
 //    the two is written as `clk_drift`. ScalarLM measured MI300X dropping to 1.136 GHz under a 750 W
-//    cap during BF16 GEMM, so this is a real effect on rented hardware. Rows with drift beyond a few
-//    percent should be excluded at analysis time rather than silently averaged in.
+//    cap during BF16 GEMM, so this is a real effect on rented hardware. Report `clk_drift` alongside
+//    the results; do not filter on it, since drift correlates with shape size and filtering by it
+//    filters by size.
 //
 // 7. PER-SHAPE BUDGET  --budget SEC
 //    Cost is nsol * t_default and the log-uniform sampler draws nsol up to ~600 with t_default up to
