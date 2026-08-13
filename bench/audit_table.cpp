@@ -25,6 +25,12 @@
 #include <algorithm>
 #include <random>
 #define HC(c) do{hipError_t _e=(c); if(_e){printf("HIP %d @%d\n",(int)_e,__LINE__);exit(1);}}while(0)
+
+// A HIP failure inside a timing lambda must not look like a measurement: those lambdas return
+// double, so `return 1` hands back 1.0 ms, an ordinary-looking value. HC() is for int-returning
+// scopes; timing lambdas use HCD(), whose sentinel loses every comparison it takes part in.
+#define TIMED_FAIL 1e30
+#define HCD(c) do{hipError_t _e=(c); if(_e){printf("HIP %d @%d\n",(int)_e,__LINE__);fflush(stdout);return TIMED_FAIL;}}while(0)
 typedef __hip_bfloat16 bf16;
 
 __device__ __forceinline__ unsigned hashu(unsigned x){
@@ -92,10 +98,10 @@ int main(int argc,char**argv){
         HC(hipDeviceSynchronize());
         std::vector<double> vd,vb;
         for(int q=0;q<REPS;++q){
-            auto tm=[&](int w)->double{ HC(hipEventRecord(e0));
+            auto tm=[&](int w)->double{ HCD(hipEventRecord(e0));
                 for(int i=0;i<ITER;++i) w? ex(rocblas_gemm_algo_solution_index,r.sol) : ex(rocblas_gemm_algo_standard,0);
-                HC(hipEventRecord(e1)); HC(hipEventSynchronize(e1));
-                float ms=0; HC(hipEventElapsedTime(&ms,e0,e1)); return ms/ITER; };
+                HCD(hipEventRecord(e1)); HCD(hipEventSynchronize(e1));
+                float ms=0; HCD(hipEventElapsedTime(&ms,e0,e1)); return ms/ITER; };
             vd.push_back(tm(0)); vb.push_back(tm(1)); }
         std::sort(vd.begin(),vd.end()); std::sort(vb.begin(),vb.end());
         double D=vd[REPS/2], B=vb[REPS/2];

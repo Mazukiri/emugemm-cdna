@@ -36,6 +36,12 @@
 #include <algorithm>
 
 #define HC(c) do{hipError_t _e=(c); if(_e){printf("HIP %d @%d\n",(int)_e,__LINE__);exit(1);}}while(0)
+
+// A HIP failure inside a timing lambda must not look like a measurement: those lambdas return
+// double, so `return 1` hands back 1.0 ms, an ordinary-looking value. HC() is for int-returning
+// scopes; timing lambdas use HCD(), whose sentinel loses every comparison it takes part in.
+#define TIMED_FAIL 1e30
+#define HCD(c) do{hipError_t _e=(c); if(_e){printf("HIP %d @%d\n",(int)_e,__LINE__);fflush(stdout);return TIMED_FAIL;}}while(0)
 #define RB(c) do{rocblas_status _s=(c); if(_s){printf("rocBLAS %d @%d\n",(int)_s,__LINE__);exit(1);}}while(0)
 typedef __hip_bfloat16 bf16;
 
@@ -214,13 +220,13 @@ int main(int argc,char**argv){
                &f1,T1,rocblas_datatype_f32_r,P,X,rocblas_datatype_f32_r,(rocblas_int)K,&f0,
                T2,rocblas_datatype_f32_r,P,T2,rocblas_datatype_f32_r,P,
                rocblas_datatype_f32_r,rocblas_gemm_algo_standard,0,0));
-            HC(hipDeviceSynchronize());
+            HCD(hipDeviceSynchronize());
             return froF(T2,(size_t)M*P)/sqrt((double)P); };
         double rho_hat = skinny(aA,aB)/std::max(1e-300,skinny(A,B));
 
         // --- error of each scheme vs fp64 ---
-        auto err=[&]()->double{ HC(hipDeviceSynchronize());
-            HC(hipMemcpy(hC.data(),C,nc*4,hipMemcpyDeviceToHost));
+        auto err=[&]()->double{ HCD(hipDeviceSynchronize());
+            HCD(hipMemcpy(hC.data(),C,nc*4,hipMemcpyDeviceToHost));
             double num=0,den=0; for(size_t i=0;i<nc;++i){double d=(double)hC[i]-hR[i];num+=d*d;den+=hR[i]*hR[i];}
             return sqrt(num/den); };
         auto G=[&](const void*Bp,const void*Ap,rocblas_datatype ty,const float*al,const float*be){
