@@ -26,7 +26,9 @@ column says `rocblas_`; see the coordinate note at the end.
 
 ## Measurement diagnostics
 
-Present only in files produced by the current method; their absence marks the earlier one.
+These columns are written by every version of the harness, so their *presence* does not indicate the
+method. **`nrot` is what distinguishes them:** 4 in the current method, 1 in the earlier one, since
+the default is `--rotate 1`. Files here with `nrot=4` were measured the current way.
 
 | column | meaning |
 |---|---|
