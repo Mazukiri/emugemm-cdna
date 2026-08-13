@@ -1,11 +1,23 @@
 *.o
 *.log
-*.txt
+
+# Build outputs. Every binary BUILD.md tells you to produce, so a build in a clean checkout leaves
+# `git status` empty.
 emugemm_test
 emu_adversarial
+randsvd2
 rho_sweep
-gen_tune_table
-mfma_peak2
 flat_error
 error_model
-randsvd2
+mfma_peak2
+gen_tune_table
+audit_table
+validate_issue
+tune_trans
+three_way2
+backend_v2
+kname
+
+# Shape lists and scratch output. Data files that belong in the repository are .csv or .tsv, so this
+# does not hide anything intended to be published.
+*.txt

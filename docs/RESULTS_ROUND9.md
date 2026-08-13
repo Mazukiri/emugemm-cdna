@@ -126,6 +126,13 @@ The resume logic meant the second run only had to compute fp16.)*
 **Total: 787 rows.** Across all three types, **only 3–10% of shapes have a default solution within 2%
 of optimal.**
 
+> **Later correction.** This table was measured with the default timed first on a cold device and the
+> winning solution last, after hundreds of launches had warmed it — an ordering bias that inflates
+> `gain = default / best` by 2.4% in aggregate. `data/tune_table.csv` in this repository is the
+> re-measured 820-row version with every candidate warmed before any is timed. Its mean gains are
+> bf16 **1.372**, fp32 **1.325**, fp16 **1.283**, against the 1.384 / 1.349 / 1.304 in the table above.
+> See the root README under *A correction I had to make to my own published numbers*.
+
 ### ⚠ Correction to Round 8 section C
 
 Round 8 concluded *"rocBLAS's fp32 heuristic is fine, only the bf16 heuristic is broken"* — based on

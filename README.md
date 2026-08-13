@@ -17,6 +17,13 @@ Measured on MI250 (gfx90a, 1 GCD, 104 CU, ROCm 7.2.3).
 | **Accuracy floor** | **4.4355e-6** — a hard limit; no amount of time buys accuracy below it |
 | **Contract** | 0 violations across 15 well-conditioned cases and 10 adversarial ones (ρ up to 1.1e6) |
 
+> **Arriving from [ROCm/rocm-libraries#9985](https://github.com/ROCm/rocm-libraries/issues/9985)?**
+> That investigation started here — the tuning table below showed rocBLAS's default solution losing to
+> another solution in the same library — and it now has its own directory, [`issue9985/`](issue9985/),
+> with data for both gfx90a and gfx942, the measurement harnesses, and the dispatch evidence. Its
+> [`issue9985/src/cmparch3.py`](issue9985/src/cmparch3.py) reproduces the mechanism with no GPU at
+> all. This repository's own `src/` is the emulation library and is unrelated.
+
 ---
 
 ## Quick start
@@ -182,6 +189,16 @@ non-MFMA kernels for bf16. Reading the shipped Tensile libraries showed **1912 o
 MFMA-based**. The performance gap is real and reproducible; the mechanism is still unknown, and the
 README says so rather than guessing.
 
+**5. Comparing medians across different shape populations — three times in one day, while verifying
+the rocBLAS report.** Each time it produced a confident wrong verdict: an architecture comparison run
+over two different sweeps, and twice a "the numbers moved" conclusion drawn from files that shared
+zero shapes. Paired per shape, nothing had moved. That the error recurred inside the verification of a
+report *about* that exact error is the reason it is listed here. The fix is mechanical: print the size
+of the intersection before comparing anything, and refuse to proceed if it is zero. Details, along
+with two figures this pass corrected (a density ratio overstated by 40% by counting table entries
+instead of distinct keys, and a correlation of 0.371 published as 0.412), are in
+[`issue9985/evidence/verification_2026-08-13.md`](issue9985/evidence/verification_2026-08-13.md).
+
 ---
 
 ## Repository layout
@@ -198,8 +215,11 @@ bench/mfma_peak2.cpp       raw matrix-core rates: fp64/fp32/fp16/bf16(both opcod
 bench/flat_error.cpp       chunked-FP64 accumulation study
 bench/error_model.cpp      error vs data distribution
 bench/randsvd2.cpp         randomized SVD with CholeskyQR2, an end-to-end application
-data/tune_table.csv        787 tuned solution indices (gfx90a, ROCm 7.2.3) — regenerate for your setup
+data/tune_table.csv        820 tuned solution indices (gfx90a, ROCm 7.2.3), the warm-up-corrected
+                           re-run — regenerate for your own setup
 docs/                      full experiment logs, including every failed experiment and why
+issue9985/                 the rocBLAS kernel-selection investigation: data for gfx90a and gfx942,
+                           harnesses, and the dispatch evidence behind ROCm/rocm-libraries#9985
 ```
 
 ---

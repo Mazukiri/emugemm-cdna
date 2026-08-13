@@ -19,7 +19,14 @@ hipcc $CXXFLAGS bench/rho_sweep.cpp   -o rho_sweep   -lrocblas
 hipcc $CXXFLAGS bench/flat_error.cpp  -o flat_error  -lrocblas
 hipcc $CXXFLAGS bench/error_model.cpp -o error_model -lrocblas
 hipcc $CXXFLAGS bench/gen_tune_table.cpp -o gen_tune_table -lrocblas
+
+# re-measures the tuning table without the ordering bias, and spot-checks the published figures
+hipcc $CXXFLAGS bench/audit_table.cpp    -o audit_table    -lrocblas
+hipcc $CXXFLAGS bench/validate_issue.cpp -o validate_issue -lrocblas
 ```
+
+The harnesses under `issue9985/src/` build the same way; `three_way2.cpp` additionally needs
+`-lhipblaslt`.
 
 ## On new hardware, run this first
 
