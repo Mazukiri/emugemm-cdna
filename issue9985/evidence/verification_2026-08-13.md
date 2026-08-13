@@ -55,3 +55,23 @@ hipBLASLt is slower for fp32 here while it is faster for fp32 on the non-batched
 large-K" (1.505, 76%). The first cell is **M == N == K exactly, n = 5**. The complement of that
 definition is 1.330 / 62% over 248 shapes, so the contrast as written is between a 5-shape cell and
 an unstated subset. Do not reuse it in the reply or the paper without redefining both sides.
+
+## Corrected after publication, 2026-08-14
+
+The cross-architecture table in the thread's workload section quoted **31.6%** for gfx90a where the
+section heading two paragraphs earlier said **31.9%** — the same quantity, two numbers. The 31.6%
+came from an ad-hoc join that keyed on shape alone; because 37 of the 338 shapes occur in more than
+one capture, that collapses them and attaches the wrong call count.
+
+Joining on `(capture, shape)`, which matches 338/338, and computed twice by independent routes — once
+from the per-capture source files, once from the merged files published here:
+
+| | gfx90a | gfx942 |
+|---|---|---|
+| GEMM time recoverable, call-count weighted | **31.90%** | **36.79%** |
+
+The thread now reads 31.9% and 36.8%. The gfx942 figure moved by 0.1 points for the same reason: its
+file had no `capture` column until this pass, so the join could not be exact.
+
+The leave-one-capture-out range quoted alongside it, 30.4%–34.5%, is confirmed unchanged: the extremes
+are dropping llama-1b-3 and dropping gemma-3-12b respectively.
