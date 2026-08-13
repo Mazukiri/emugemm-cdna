@@ -29,6 +29,7 @@
 #include <set>
 #include <vector>
 #include <algorithm>
+#include <sys/file.h>   // flock, so parallel shards cannot each write the CSV header
 
 #define HIP_CHECK(c) do{hipError_t _he=(c); if(_he){fprintf(stderr,"HIP %s @%d\n",hipGetErrorString(_he),__LINE__);exit(1);}}while(0)
 typedef __hip_bfloat16 bf16;
@@ -83,7 +84,19 @@ int main(int argc,char**argv){
     (void)rmaj;(void)rmin;(void)rpat;
 
     FILE* fo=fopen(out,"a");
-    if(fresh) fprintf(fo,"arch,rocm,M,N,K,dtype,best_sol,best_ms,default_ms,gain\n");
+    // Header, written exactly once. All shards start at the same instant on an empty file, all see
+    // done.empty(), and all append -- the first published CSV shipped with 8 header lines, which makes
+    // pandas.read_csv produce 7 rows of garbage. flock serialises them; the re-check of the file size
+    // inside the lock is what actually makes it once-only.
+    // The column holds rocblas_get_version_string(), i.e. the rocBLAS version and NOT the ROCm version:
+    // "5.2.0.dabb6df2b9" is rocBLAS 5.2.0 as shipped inside ROCm 7.2.3, and naming it "rocm" invited
+    // exactly the wrong reading.
+    if(fresh){
+        flock(fileno(fo),LOCK_EX);
+        fseek(fo,0,SEEK_END);
+        if(ftell(fo)==0) fprintf(fo,"arch,rocblas_version,M,N,K,dtype,best_sol,best_ms,default_ms,gain\n");
+        fflush(fo);
+        flock(fileno(fo),LOCK_UN); }
     fflush(fo);
     printf("shard %d/%d  budget %.0fs/shape  arch=%s rocblas=%s  %zu shapes, %zu already done\n",
            shard,nshard,budget,arch,rocv,shapes.size(),done.size());

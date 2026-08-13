@@ -264,10 +264,32 @@ Re-measured with both variants warmed and then timed interleaved (`bench/audit_t
 | median gain | 1.254 | 1.247 |
 | shapes losing >10% | 80% | 75% |
 
-Aggregate inflation is **2.4%**, but individual shapes were worse — one headline example went from
-2.00× to **1.63×**. The tool now warms every candidate before timing any of them, and the correction is
-posted on the issue.
+Aggregate inflation is **2.4%**. The tool now warms every candidate before timing any of them.
 
 Two things I *suspected* were wrong turned out not to be, and I checked rather than assumed: the
 minimum-over-16 selection biases the best time by less than 0.5%, and `rocblas_sgemm` agrees with
 `rocblas_gemm_ex`+`algo_standard` to within 1.2%, so the finding applies to the API people actually call.
+
+### …and a correction to the correction
+
+That correction also claimed one headline example fell from 2.00× to **1.63×**. That figure came from a
+single re-measurement with the default at 24.128 ms; two full sweeps put it near 28.1 ms. Re-measured
+alone on an idle GCD, warmed, interleaved, median-of-9:
+
+| | default | best solution | gain |
+|---|---|---|---|
+| `4096×4096×16384` fp32 | 28.72 ms (19.14 TF) | 14.86 ms (36.99 TF) | **1.933×** |
+
+**The original 2.00× was very nearly right; the 1.63× was the outlier** — a noisy quantity quoted to
+three digits from one sample, which is the mistake the correction was written to fix.
+
+The sweep is also sharded across 8 GCDs, which can distort GEMM timing badly (`hipEventElapsedTime`
+charges host-side stalls to the kernel; on sub-millisecond shapes I measured a mean 12.3× inflation).
+All 39 shapes quoted here were therefore re-measured on an idle GCD: mean(isolated/sharded) = **0.9945**,
+mean absolute deviation 3.1%, 2 of 39 differing by more than 10%. No systematic inflation — this grid's
+shapes are long enough that a fixed stall is negligible.
+
+The two exceptions are named rather than averaged away: `8192×16384×32768` bf16 measured **2.636×**
+sharded and **1.580×** isolated (40% apart), and `8192×28672×8192` bf16 went the other way, 1.508× →
+1.661×. The first is the largest shape in the table (8.8e12 flops, ~2.1 GB of operands) and is the one
+row here where 8-way HBM pressure plausibly bit. Worth knowing if you reproduce this on a shared node.
