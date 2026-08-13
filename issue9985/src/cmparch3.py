@@ -20,7 +20,16 @@ Type codes are the ones rocBLAS actually dispatches. A GEMM with fp32 output and
 through `Type_BS_HPA` / `Type_HS_HPA` for bf16 / fp16 inputs, not `Type_BB` / `Type_HH`; both are
 listed so the distinction is visible rather than assumed.
 
-Usage:  pip install msgpack && python3 cmparch3.py [library_dir]
+Two views, because the issue thread quotes both:
+
+  default            one row per architecture, the NN transpose, largest variant per dtype
+  --by-transpose     one architecture, all four transposes, which is where the fallback tables show
+                     up: on gfx90a the TT table for bf16 holds 48 tuned points against its siblings'
+                     ~2600, because no CU104 table ships for that combination
+
+Usage:  pip install msgpack
+        python3 cmparch3.py [library_dir]
+        python3 cmparch3.py [library_dir] --by-transpose [gfx90a]
 """
 import collections
 import glob
@@ -30,7 +39,11 @@ import sys
 
 import msgpack
 
-ROOT = sys.argv[1] if len(sys.argv) > 1 else "/opt/rocm/lib/rocblas/library"
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+BY_TRANSPOSE = "--by-transpose" in sys.argv
+ROOT = ARGS[0] if ARGS else "/opt/rocm/lib/rocblas/library"
+ONE_ARCH = ARGS[1] if len(ARGS) > 1 else "gfx90a"
+TRANSPOSES = ["Ailk_Bljk", "Alik_Bljk", "Ailk_Bjlk", "Alik_Bjlk"]
 TYPES = {"SS": "fp32", "BB_HPA": "bf16", "HH_HPA": "fp16",
          "BS_HPA": "bf16->fp32", "HS_HPA": "fp16->fp32"}
 ARCH_NAMES = {"gfx908": "MI100", "gfx90a": "MI250", "gfx942": "MI300X", "gfx950": "MI355X"}
@@ -46,10 +59,36 @@ def tuned_points(path):
     return []
 
 
+def by_transpose():
+    """All four transposes for one architecture, both variants of each table."""
+    print(f"Tuned points per (dtype, transpose) on {ONE_ARCH}")
+    print(f"library: {ROOT}")
+    print("cells are  entries / distinct keys;  '-' means the table is not shipped\n")
+    header = f"{'dtype':14s}{'variant':10s}" + "".join(f"{t:>20s}" for t in TRANSPOSES)
+    print(header)
+    print("-" * len(header))
+    for type_code, dtype in TYPES.items():
+        for tag, variant in ((f"CU104_{ONE_ARCH}", "CU104"), (ONE_ARCH, "generic")):
+            cells = []
+            for tr in TRANSPOSES:
+                path = f"{ROOT}/TensileLibrary_Type_{type_code}_Contraction_l_{tr}_Cijk_Dijk_{tag}.dat"
+                if not os.path.exists(path):
+                    cells.append("-")
+                    continue
+                pts = tuned_points(path)
+                cells.append(f"{len(pts)} / {len(set(pts))}" if pts else "-")
+            if any(c != "-" for c in cells):
+                print(f"{dtype:14s}{variant:10s}" + "".join(f"{c:>20s}" for c in cells))
+
+
 def main():
     if not os.path.isdir(ROOT):
         sys.exit(f"no such directory: {ROOT}\n"
                  f"pass the rocBLAS library directory as the first argument")
+
+    if BY_TRANSPOSE:
+        by_transpose()
+        return
 
     # One variant per (arch, dtype): the largest, since a dtype can ship several (HPA, Fp16Alt, ...).
     # The NN transpose only; within one architecture the four transposes differ by up to 53x, so a
