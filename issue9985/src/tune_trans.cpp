@@ -65,6 +65,13 @@
 #include <vector>
 #include <algorithm>
 #define HC(c) do{hipError_t e=(c); if(e){printf("HIP %d @%d\n",(int)e,__LINE__);return 1;}}while(0)
+
+// A HIP call that fails inside a timing lambda must not look like a measurement. Those lambdas
+// return double, so a plain `return 1` hands back 1.0 ms - a plausible-looking timing for a
+// failure. HC() is used only where the return type is int; the timing lambdas use HCD(), which
+// returns TIMED_FAIL, and every caller already treats values above 1e29 as "did not run".
+#define TIMED_FAIL 1e30
+#define HCD(c) do{hipError_t _e=(c); if(_e){printf("HIP %d @%d\n",(int)_e,__LINE__);fflush(stdout);return TIMED_FAIL;}}while(0)
 typedef __hip_bfloat16 bf16;
 
 // Uniform [-1,1] from a hashed index: deterministic, reproducible, no host->device copy.
@@ -125,10 +132,10 @@ int main(int argc,char**argv){
             &f1,rB,rocblas_datatype_f32_r,RN,rA,rocblas_datatype_f32_r,RN,&f0,
             rC,rocblas_datatype_f32_r,RN,rC,rocblas_datatype_f32_r,RN,
             rocblas_datatype_f32_r,rocblas_gemm_algo_standard,0,0); };
-        go(); HC(hipDeviceSynchronize());
-        HC(hipEventRecord(e0)); for(int i=0;i<3;++i) go();
-        HC(hipEventRecord(e1)); HC(hipEventSynchronize(e1));
-        float ms=0; HC(hipEventElapsedTime(&ms,e0,e1)); return ms/3; };
+        go(); HCD(hipDeviceSynchronize());
+        HCD(hipEventRecord(e0)); for(int i=0;i<3;++i) go();
+        HCD(hipEventRecord(e1)); HCD(hipEventSynchronize(e1));
+        float ms=0; HCD(hipEventElapsedTime(&ms,e0,e1)); return ms/3; };
 
     // ---- clock stabilisation: spin the reference until consecutive windows agree to 2% ----------
     // CUTLASS: "run warmups until power stabilizes (~3 seconds observed for clock settling)". We
@@ -185,10 +192,10 @@ int main(int argc,char**argv){
                 rocblas_datatype_f32_r,al,so,0); };
         auto timeit=[&](rocblas_gemm_algo al,int32_t so,int reps)->double{
             if(run(al,so)!=rocblas_status_success) return 1e30;
-            HC(hipDeviceSynchronize()); HC(hipEventRecord(e0));
+            HCD(hipDeviceSynchronize()); HCD(hipEventRecord(e0));
             for(int i=0;i<reps;++i) run(al,so);
-            HC(hipEventRecord(e1)); HC(hipEventSynchronize(e1));
-            float ms=0; HC(hipEventElapsedTime(&ms,e0,e1)); return ms/reps; };
+            HCD(hipEventRecord(e1)); HCD(hipEventSynchronize(e1));
+            float ms=0; HCD(hipEventElapsedTime(&ms,e0,e1)); return ms/reps; };
         if(run(rocblas_gemm_algo_standard,0)!=rocblas_status_success){
             printf("  %dx%dx%ld %s %c%c: unsupported\n",M,N,K,dn,ca,cb);
             freeall(); continue; }

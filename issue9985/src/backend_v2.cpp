@@ -33,6 +33,13 @@
 #include <vector>
 #include <algorithm>
 #define HC(c) do{hipError_t _e=(c); if(_e){printf("HIP %d @%d\n",(int)_e,__LINE__);fflush(stdout);return 1;}}while(0)
+
+// A HIP call that fails inside a timing lambda must not look like a measurement. Those lambdas
+// return double, so a plain `return 1` hands back 1.0 ms - a plausible-looking timing for a
+// failure. HC() is used only where the return type is int; the timing lambdas use HCD(), which
+// returns TIMED_FAIL, and every caller already treats values above 1e29 as "did not run".
+#define TIMED_FAIL 1e30
+#define HCD(c) do{hipError_t _e=(c); if(_e){printf("HIP %d @%d\n",(int)_e,__LINE__);fflush(stdout);return TIMED_FAIL;}}while(0)
 typedef __hip_bfloat16 bf16;
 
 // identical to tune_trans.cpp so both harnesses feed the hardware the same data
@@ -79,10 +86,10 @@ int main(int argc,char**argv){
             &f1,rB,rocblas_datatype_f32_r,RN,rA,rocblas_datatype_f32_r,RN,&f0,
             rC,rocblas_datatype_f32_r,RN,rC,rocblas_datatype_f32_r,RN,
             rocblas_datatype_f32_r,rocblas_gemm_algo_standard,0,0); };
-        go(); HC(hipDeviceSynchronize());
-        HC(hipEventRecord(e0)); for(int i=0;i<3;++i) go();
-        HC(hipEventRecord(e1)); HC(hipEventSynchronize(e1));
-        float ms=0; HC(hipEventElapsedTime(&ms,e0,e1)); return ms/3; };
+        go(); HCD(hipDeviceSynchronize());
+        HCD(hipEventRecord(e0)); for(int i=0;i<3;++i) go();
+        HCD(hipEventRecord(e1)); HCD(hipEventSynchronize(e1));
+        float ms=0; HCD(hipEventElapsedTime(&ms,e0,e1)); return ms/3; };
     { double prev=ref_ms(); int stable=0;
       for(int i=0;i<40 && stable<3;++i){ double cur=ref_ms();
           if(fabs(cur-prev)/prev < 0.02) ++stable; else stable=0; prev=cur; }
