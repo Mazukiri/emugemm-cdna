@@ -49,9 +49,42 @@ Present only in files produced by the current method; their absence marks the ea
 | `pad`, `cneqd` | `tensile_predicates.csv` | leading-dimension padding, and whether C and D are distinct pointers. Both are Tensile predicates that could in principle disqualify fast kernels |
 | `n_all`, `n_noatomic` | `determinism.csv` | candidate count with and without `rocblas_atomics_not_allowed` |
 | `def_repro`, `best_repro` | `determinism.csv` | 1 if the arm produced bit-identical output across five runs |
+| `ms_def`, `ms_best`, `ms_best_noatomic` | `determinism.csv` | default, best, and best-with-atomics-forbidden. The ratio `ms_best_noatomic / ms_best` is the figure to use: median 0.9997, worst 1.010 |
+| `seq` | `unbiased.csv` | position in the randomised measurement order, recorded so drift across the sweep can be checked (first half 1.0037, second half 1.0043) |
+| `sol` | `unbiased.csv` | the solution index handed to the re-measurement. It is not searched for again — that is the point of the control |
+| `new_gain_min` | `unbiased.csv` | the re-measured gain using the minimum instead of the median, showing the choice costs 0.03% |
 | `best_in_noatomic_set` | `determinism.csv` | **misleading name**: it records whether two searches picked the same solution index, not set membership. Use `ms_best_noatomic / ms_best` instead |
 | `old_gain`, `new_gain` | `unbiased.csv` | gain as originally measured, and re-measured in a fresh process with no selection |
 | `def_med`, `best_med`, `def_min`, `best_min` | `unbiased.csv` | median and minimum of the re-measurement, to show that reporting the minimum changes nothing (0.03%) |
+
+## `q2_families.csv` — the answer to question 2
+
+One row per shape, carrying the same problem in both coordinate systems so the mapping is explicit
+rather than something a reader has to derive.
+
+| column | meaning |
+|---|---|
+| `family` | `skinny-M` (M ≤ 16, N and K ≥ 1024) or `large-K` (K ≥ 8192, min(M,N) ≥ 128) |
+| `harness_M`, `harness_N`, `K`, `harness_opA`, `harness_opB` | the problem as the harness states it: row-major `C = A·B` |
+| `rocblas_M`, `rocblas_N`, `rocblas_transA`, `rocblas_transB` | the same problem as rocBLAS receives it, operands swapped. `rocblas_M` = `harness_N`, `rocblas_transA` = `harness_opB`. `K` is the same in both |
+| `n_solutions` | candidates returned by `rocblas_gemm_ex_get_solutions` |
+| `rocblas_solution_index` | the winner, rocBLAS-encoded. Negative means a Tensile-backed solution |
+| `tensile_index_for_override` | the same winner converted for the override file: `-index - 10`. It would read `hipBLASLt-backed` for a winner that is not a Tensile solution, since a Tensile override table cannot express one — but all 746 winners here are Tensile-backed, so every row is usable as it stands |
+| `default_ms`, `best_ms`, `gain` | as elsewhere |
+
+## `q2_override.csv` — the same rows in `rocblas-gemm-tune` format
+
+Entirely in rocBLAS coordinates, because that is what the override parser reads. Column order and
+names follow the Programmer's Guide so the file can be used without editing.
+
+| column | meaning |
+|---|---|
+| `transA`, `transB` | rocBLAS operations, i.e. the harness's `opB` and `opA` |
+| `M`, `N`, `K`, `batch_count` | problem size in rocBLAS coordinates; `batch_count` is 1 throughout |
+| `alpha`, `beta` | 1 and 0 throughout |
+| `lda`, `ldb`, `ldc` | leading dimensions for the swapped operand order |
+| `input_type`, `output_type`, `compute_type` | `f32_r` / `bf16_r` / `f16_r` input; output and compute are `f32_r` throughout |
+| `solution_index` | the raw Tensile index, positive and 1-based — already converted, so the file works as it stands |
 
 ## Arm labels
 
