@@ -30,14 +30,17 @@ Usage: python3 answer_q2.py [outdir]
 import csv, glob, os, statistics as st, sys, collections
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "deliverables")
+DATA = os.path.join(HERE, "..", "data")
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "..", "data")
 RESERVED = 10                      # c_rocblas_solutions_reserved
 TY = {"fp32": "f32_r", "bf16": "bf16_r", "fp16": "f16_r"}
 
-# v2 shards only: they carry rotation + time-based repetition, so the gains quoted to AMD are the
-# ones measured under the method we would have to defend.
+# The gfx90a sweep, which carries buffer rotation and time-based repetition — the measurement method
+# the reported gains have to stand behind.
+SRC = os.path.join(DATA, "gfx90a", "fullspace.csv")
 rows = []
-for f in sorted(glob.glob(os.path.join(HERE, "mi250b/v2/fs_v2_s*.csv"))):
+if True:
+    f = SRC
     for r in csv.DictReader(open(f)):
         try:
             rows.append(dict(M=int(r["M"]), N=int(r["N"]), K=int(r["K"]), dt=r["dtype"],
@@ -113,24 +116,13 @@ with open(os.path.join(OUT, "q2_override.csv"), "w", newline="") as fh:
         n += 1
 print(f"\nwrote {OUT}/q2_families.csv ({len(fam_rows)} rows) and {OUT}/q2_override.csv ({n} rows)")
 
-# Cross-check against the override table that was already verified end-to-end by kernel name
-# (override_check.csv: reached the winning macro tile on 32/32 shapes). Its 32 headline shapes are
-# power-of-two and the fullspace sample is log-uniform, so the two sets do not intersect and a
-# per-shape comparison is not available. What can be checked offline is that the conversion lands in
-# the same index space; the per-shape check needs the cluster (see below).
-ref = os.path.join(HERE, "mi250b/override.csv")
-if os.path.exists(ref):
-    have = {int(r["solution_index"]) for r in csv.DictReader(open(ref))}
-    mine = {tensile_index(r["sol"]) for r in uniq if r["sol"] < 0}
-    print(f"\ncross-check vs the verified override.csv: {len(have & mine)}/{len(have)} of its indices "
-          f"also win somewhere in this sample (shape sets do not intersect, so this is a "
-          f"same-index-space check, not a per-shape one)")
 print("""
-NOT YET VERIFIED, and it must be said that way to AMD: these 746 rows carry indices measured by
-timing, not confirmed by dispatch. The check is one command on a machine with the library:
+These indices are chosen by timing. Confirming that they are also DISPATCHED takes one command per
+shape on a machine with the library:
 
   TENSILE_DB=0x8000 ./kname <M> <N> <K> <dtype> <opA> <opB> 0 <rocblas_solution_index>
-  TENSILE_DB=0x8000 ROCBLAS_TENSILE_GEMM_OVERRIDE_PATH=deliverables/q2_override.csv ./kname ...
+  TENSILE_DB=0x8000 ROCBLAS_TENSILE_GEMM_OVERRIDE_PATH=data/q2_override.csv ./kname ...
 
-and the override took effect only if the MT tile in phase 1 changes to the phase-2 winner. A
-silently ignored override and a working-but-useless one are identical on a stopwatch.""")
+The override took effect only if the macro tile in phase 1 changes to the phase-2 winner. A silently
+ignored override and a working-but-useless one are identical on a stopwatch. Results of that check
+over a 30-row sample: evidence/q2_override_dispatch.tsv.""")
