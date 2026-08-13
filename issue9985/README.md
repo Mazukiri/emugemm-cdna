@@ -30,7 +30,7 @@ kernel. `src/answer_q2.py` does the conversion and the coordinate swap in one pl
 |---|---|---|
 | the sweep the headline medians come from | `data/gfx90a/fullspace.csv` (7009) | `data/gfx942/fullspace.csv` (4776) |
 | five ROCm releases pick the same kernel | `data/gfx90a/versions/rocm_*.csv` (5 × 240) and `kernel_names.csv` | `data/gfx942/versions/rocm_*.csv` (5 × 239) and `kernel_names.csv` |
-| real-workload cost, call-count weighted | `data/gfx90a/workload_gain.csv` + `workload_counts.csv` (338 shapes, 11 captures of 7 models) | `data/gfx942/workload.csv` |
+| real-workload cost, call-count weighted | `data/gfx90a/workload_gain.csv` + `workload_counts.csv` (338 shapes, 11 captures of 7 models) | `data/gfx942/workload.csv` — same 338, joinable on `capture` + shape |
 | the override fixes it, end to end | `data/gfx90a/workload_override_ab.csv` (3 captures × 3 arms) | — |
 | `ROCBLAS_USE_HIPBLASLT` A/B | `hipblaslt_ab_{fp32,bf16fp16}.csv`, and `*_v2.csv` re-measured under the current method | — |
 | selection bias: no search, fresh process, median | `data/gfx90a/unbiased.csv` (60) | `data/gfx942/unbiased.csv` (60) |

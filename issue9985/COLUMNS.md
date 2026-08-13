@@ -64,6 +64,21 @@ Present only in files produced by the current method; their absence marks the ea
 | `..._n13`, `..._n18` | the same arm measured on **two different nodes** — independent replicates, not two settings |
 | `..._r1`, `..._r2` | two repeats in separate processes on one node |
 
+## Repeated records
+
+Eighteen records across six files measure a shape that appeared twice in the input list: 4 each in
+the three larger `hipblaslt_ab_*` files, 2 in `hipblaslt_ab_fp32_v2.csv`, 1 in
+`gfx942/fullspace.csv`, 3 in `data/tune_table.csv` at the repository root. They are independent
+repeats, not duplicated rows, and they are left in rather than deduplicated.
+
+This matters only if you build a dictionary keyed by shape, because the row you keep then depends on
+whether you assign or `setdefault`. Checked both ways: every published median is identical to six
+decimal places either way. The analysis scripts here keep the first.
+
+Do not confuse this with the deliberate repeats: `hipblaslt_ab_fp32.csv` carries `_r1` and `_r2`
+labels, two full passes over the whole population in separate processes, which is how the reported
+run-to-run agreement of 1.007 was measured.
+
 ## Coordinate note
 
 The harnesses compute row-major `C = A·B` by calling column-major rocBLAS with the operands swapped:
