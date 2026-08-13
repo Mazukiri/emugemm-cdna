@@ -75,3 +75,24 @@ file had no `capture` column until this pass, so the join could not be exact.
 
 The leave-one-capture-out range quoted alongside it, 30.4%–34.5%, is confirmed unchanged: the extremes
 are dropping llama-1b-3 and dropping gemma-3-12b respectively.
+
+## Fresh-eyes pass over the posted comment, 2026-08-14
+
+Every quantitative claim in the thread was re-derived from the files published here. Twenty-two
+figures in sections 1, 2, 4, 5 and 6 matched exactly. Four things did not, and were corrected in the
+thread:
+
+1. **31.6% versus 31.9%** for the same quantity, twenty lines apart — recorded above.
+2. **Section 1 counted table entries while section 3 counted distinct keys.** Both now use distinct
+   keys, which moves the standout figure from 53× to 40× and surfaces two facts the entry counts
+   hid: the pure-bf16 table has 8 distinct points for the fallback transpose, and the CU104 tables
+   are smaller than the generic ones in entries while carrying nearly the same distinct count.
+3. **"0 of 240 shapes"** where the file has 239 rows, in two places.
+4. **A version-matrix claim with no file behind it** — "no version differs by more than 0.3%" — now
+   names its source and its worst case (6.3.4, 0.26%).
+
+Checks that passed and are worth recording as passed: the 24/5/1/0 override tally re-derives from
+the raw macro-tile columns without trusting the status column each row carries; the Q1 dispatch log
+supports its claim on all twelve rows; section 5's kernel-name check is 12/12 against three releases;
+tables are column-balanced, section numbering is contiguous, every §-reference points at a section
+that exists, and every repository link resolves.
