@@ -86,7 +86,7 @@ for name, sel in FAM:
         fam_rows.append(r)
 
 with open(os.path.join(OUT, "q2_families.csv"), "w", newline="") as fh:
-    w = csv.writer(fh)
+    w = csv.writer(fh, lineterminator="\n")  # default is \r\n
     w.writerow(["family", "harness_M", "harness_N", "K", "dtype", "harness_opA", "harness_opB",
                 "rocblas_M", "rocblas_N", "rocblas_transA", "rocblas_transB",
                 "n_solutions", "rocblas_solution_index", "tensile_index_for_override",
@@ -101,7 +101,9 @@ with open(os.path.join(OUT, "q2_families.csv"), "w", newline="") as fh:
 hdr = ["transA", "transB", "M", "N", "batch_count", "K", "alpha", "beta",
        "lda", "ldb", "ldc", "input_type", "output_type", "compute_type", "solution_index"]
 with open(os.path.join(OUT, "q2_override.csv"), "w", newline="") as fh:
-    w = csv.writer(fh); w.writerow(hdr); n = 0
+    w = csv.writer(fh, lineterminator="\n")
+    w.writerow(hdr)
+    n = 0
     for r in fam_rows:
         ti = tensile_index(r["sol"])
         if ti is None:

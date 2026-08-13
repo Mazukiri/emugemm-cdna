@@ -1,0 +1,7 @@
+# Text files are stored and checked out with LF. Without this, a CSV written by Python's csv.writer
+# (which defaults to \r\n) lands in the repository with CRLF, and a shell script that reads such a
+# file leaves a stray CR inside the field it read — which is how a published evidence file came to
+# parse as 60 half-records instead of 30 whole ones.
+* text=auto eol=lf
+*.csv text eol=lf
+*.tsv text eol=lf
